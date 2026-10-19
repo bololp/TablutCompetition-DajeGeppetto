@@ -8,6 +8,7 @@ import it.unibo.ai.didattica.competition.tablut.aiplayer.AshtonRules;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Evaluator;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.EvaluatorLoader;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Negamax;
+import it.unibo.ai.didattica.competition.tablut.aiplayer.OrderingSpec;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.SimpleEvaluator;
 import it.unibo.ai.didattica.competition.tablut.domain.Action;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
@@ -23,8 +24,8 @@ import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
  * <p>
  * Uso: {@code EqualTimeArena <A> <B> [coppie=30] [msPerMossa=100] [seed=1] [threads] [profonditaFissa]} dove A e B sono
  * {@code simple} oppure il percorso di un file di pesi, eventualmente preceduto da un prefisso che sceglie la RICERCA di quel
- * lato ({@code ab:}, {@code pvs:}, {@code nopvs:}: si veda {@link #usesPVS}) per misurare a tempo uguale il guadagno di PVS e
- * dell'ordinamento delle mosse. Un prefisso {@code tN:} (es. {@code t4:simple}, {@code t1:t4:...} non ha senso: basta uno)
+ * lato ({@code ab:}, {@code pvs:}, {@code nopvs:}, {@code ord=rec:}, {@code tt=20:}, {@code tt2:}, {@code m=0:}: si veda {@link #usesPVS}) per
+ * misurare a tempo uguale il guadagno di PVS, dell'ordinamento delle mosse, della dimensione/politica della TT. Un prefisso {@code tN:} (es. {@code t4:simple}, {@code t1:t4:...} non ha senso: basta uno)
  * fissa i THREAD di ricerca (Lazy SMP) di quel lato; l'argomento finale {@code threads} e' il valore comune di default
  * ({@link Negamax#defaultThreads()}). Attenzione: con piu' thread dei core fisici il confronto penalizza il lato parallelo.
  * Ogni "coppia" e' una apertura
@@ -34,9 +35,9 @@ import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
  * profondita' media raggiunta e nodi/s.
  *
  * <p>
- * <b>Attenzione al tempo EFFETTIVO</b>: {@code Negamax.findBestMove} toglie al budget ricevuto un margine di sicurezza di 400 ms (pensato
- * per il server) e ha un minimo di 50 ms. Quindi {@code msPerMossa=100} significa 50 ms di ricerca reale, e per ottenere T ms effettivi
- * serve passare {@code T + 400}. Il confronto fra due lati Negamax resta simmetrico (entrambi subiscono lo stesso margine), ma il
+ * <b>Attenzione al tempo EFFETTIVO</b>: {@code Negamax.findBestMove} toglie al budget ricevuto un margine di sicurezza (300 ms di
+ * default, pensato per il server) e ha un minimo di 50 ms. Quindi {@code msPerMossa=100} significa 50 ms di ricerca reale, e per ottenere
+ * T ms effettivi serve passare {@code T + 300}, oppure dare a ENTRAMBI i lati il prefisso {@code m=0:} (allora {@code msPerMossa} e' il tempo reale). Il confronto fra due lati Negamax resta simmetrico (entrambi subiscono lo stesso margine), ma il
  * confronto con un altro algoritmo (si veda {@code experiments.MctsArena}) va compensato.
  *
  * <p>
@@ -47,44 +48,95 @@ import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
  */
 public class EqualTimeArena {
 
-	/**
-	 * Prefisso opzionale che sceglie la ricerca di quel lato (stesso evaluator, stessa TT, stesso tempo):
-	 * nessun prefisso = completa (PVS + killer + history); {@code pvs:} = PVS senza ordinamento (versione precedente);
-	 * {@code nopvs:} = alpha-beta con killer + history; {@code ab:} = alpha-beta puro senza ordinamento (ricerca originale).
-	 */
-	static boolean usesPVS(String spec) {
-		String s = spec.replaceFirst("^t\\d+:", "");
-		return !(s.startsWith("nopvs:") || s.startsWith("ab:"));
-	}
+	private static final java.util.regex.Pattern PREFIX = java.util.regex.Pattern
+			.compile("^(t\\d+|ord=[a-z+]+|tt=\\d+|tt2|m=\\d+|nopvs|pvs|ab):");
 
-	static int orderingOf(String spec) {
-		String s = spec.replaceFirst("^t\\d+:", "");
-		return (s.startsWith("pvs:") || s.startsWith("ab:")) ? Negamax.ORDER_NONE : Negamax.ORDER_DEFAULT;
-	}
-
-	/** Prefisso opzionale {@code tN:} (N cifre): thread di ricerca di QUEL lato, al posto del valore comune. Si puo' combinare con gli altri prefissi (es. {@code t4:pvs:simple}). */
-	static int threadsOf(String spec, int dflt) {
-		java.util.regex.Matcher m = java.util.regex.Pattern.compile("^t(\\d+):").matcher(spec);
-		return m.find() ? Math.max(1, Integer.parseInt(m.group(1))) : dflt;
+	/** I prefissi di {@code spec}, nell'ordine in cui compaiono (senza i due punti). */
+	static java.util.List<String> prefixes(String spec) {
+		java.util.List<String> out = new java.util.ArrayList<>();
+		java.util.regex.Matcher m = PREFIX.matcher(spec);
+		while (m.find()) {
+			out.add(m.group(1));
+			spec = spec.substring(m.end());
+			m = PREFIX.matcher(spec);
+		}
+		return out;
 	}
 
 	static String stripPrefix(String spec) {
-		boolean changed = true;
-		while (changed) {
-			changed = false;
-			java.util.regex.Matcher m = java.util.regex.Pattern.compile("^t\\d+:").matcher(spec);
-			if (m.find()) {
-				spec = spec.substring(m.end());
-				changed = true;
-			}
-			for (String pre : new String[] { "nopvs:", "pvs:", "ab:" }) {
-				if (spec.startsWith(pre)) {
-					spec = spec.substring(pre.length());
-					changed = true;
-				}
-			}
+		java.util.regex.Matcher m = PREFIX.matcher(spec);
+		while (m.find()) {
+			spec = spec.substring(m.end());
+			m = PREFIX.matcher(spec);
 		}
 		return spec;
+	}
+
+	/**
+	 * Prefissi opzionali (combinabili, in qualunque ordine) che scelgono la ricerca di QUEL lato, a parita' di evaluator e tempo:
+	 * nessuno = completa (PVS + killer + history); {@code pvs:} = PVS senza ordinamento; {@code nopvs:} = alpha-beta con killer +
+	 * history; {@code ab:} = alpha-beta puro senza ordinamento; {@code ord=<nomi>:} = ordinamento scelto con {@link OrderingSpec}
+	 * (es. {@code ord=rec:}, {@code ord=wins+caps:}); {@code tt=<log2>:} = TT di 2^log2 voci (default 2^18); {@code tt2:} = TT a due
+	 * slot; {@code m=<ms>:} = margine di sicurezza di Negamax (default 300; con {@code m=0:} su ENTRAMBI i lati {@code msPerMossa}
+	 * e' il tempo di ricerca reale); {@code tN:} = N thread di ricerca.
+	 */
+	static boolean usesPVS(String spec) {
+		java.util.List<String> p = prefixes(spec);
+		return !(p.contains("nopvs") || p.contains("ab"));
+	}
+
+	static int orderingOf(String spec) {
+		java.util.List<String> p = prefixes(spec);
+		int mode = (p.contains("pvs") || p.contains("ab")) ? Negamax.ORDER_NONE : Negamax.ORDER_DEFAULT;
+		for (String t : p) {
+			if (t.startsWith("ord=")) {
+				mode = OrderingSpec.parse(t.substring(4));
+			}
+		}
+		return mode;
+	}
+
+	/** Prefisso opzionale {@code tN:} (N cifre): thread di ricerca di QUEL lato, al posto del valore comune. */
+	static int threadsOf(String spec, int dflt) {
+		for (String t : prefixes(spec)) {
+			if (t.matches("t\\d+")) {
+				return Math.max(1, Integer.parseInt(t.substring(1)));
+			}
+		}
+		return dflt;
+	}
+
+	static int ttLog2Of(String spec, int dflt) {
+		for (String t : prefixes(spec)) {
+			if (t.startsWith("tt=")) {
+				return Math.max(4, Math.min(26, Integer.parseInt(t.substring(3))));
+			}
+		}
+		return dflt;
+	}
+
+	static boolean twoSlotOf(String spec) {
+		return prefixes(spec).contains("tt2");
+	}
+
+	/** Margine di sicurezza richiesto con {@code m=<ms>:}, oppure -1 (lascia quello di Negamax). */
+	static long marginOf(String spec) {
+		for (String t : prefixes(spec)) {
+			if (t.startsWith("m=")) {
+				return Long.parseLong(t.substring(2));
+			}
+		}
+		return -1;
+	}
+
+	/** La ricerca di un lato secondo i suoi prefissi. */
+	static Negamax newSearcher(Evaluator ev, int maxDepth, String spec, int threads) {
+		Negamax n = new Negamax(ev, maxDepth, true, 1 << ttLog2Of(spec, 18), usesPVS(spec), orderingOf(spec), threadsOf(spec, threads), twoSlotOf(spec))
+				.setThreads(threadsOf(spec, threads));
+		if (marginOf(spec) >= 0) {
+			n.setSafetyMarginMillis(marginOf(spec));
+		}
+		return n;
 	}
 
 	static Evaluator build(String spec) throws IOException {
@@ -130,8 +182,8 @@ public class EqualTimeArena {
 				Evaluator white = swap == 0 ? evA : evB, black = swap == 0 ? evB : evA;
 				Stats stW = swap == 0 ? sa : sb, stB = swap == 0 ? sb : sa;
 				String sw = swap == 0 ? specA : specB, sbk = swap == 0 ? specB : specA;
-				Negamax nw = new Negamax(white, maxDepth, true, 1 << 18, usesPVS(sw), orderingOf(sw)).setThreads(threadsOf(sw, threads));
-				Negamax nb = new Negamax(black, maxDepth, true, 1 << 18, usesPVS(sbk), orderingOf(sbk)).setThreads(threadsOf(sbk, threads));
+				Negamax nw = newSearcher(white, maxDepth, sw, threads);
+				Negamax nb = newSearcher(black, maxDepth, sbk, threads);
 				State s = open;
 				for (int ply = 4; ply < 160 && !AshtonRules.isTerminal(s); ply++) {
 					boolean wt = s.getTurn() == Turn.WHITE;

@@ -1,11 +1,14 @@
 package it.unibo.ai.didattica.competition.tablut.aiplayer;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
 import java.util.Set;
 
+import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+import it.unibo.ai.didattica.competition.tablut.engine.Move;
 import it.unibo.ai.didattica.competition.tablut.domain.Action;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
@@ -41,11 +44,18 @@ public class SearchOptimizationsCheck {
 		final String name;
 		final boolean pvs;
 		final int order;
+		/** Se vero, checkEquivalence verifica anche (per d <= 3) che nessun'altra mossa valga di piu' (controllo esaustivo, costoso). */
+		final boolean exhaustive;
 
 		Cfg(String name, boolean pvs, int order) {
+			this(name, pvs, order, false);
+		}
+
+		Cfg(String name, boolean pvs, int order, boolean exhaustive) {
 			this.name = name;
 			this.pvs = pvs;
 			this.order = order;
+			this.exhaustive = exhaustive;
 		}
 
 		Negamax make(Evaluator ev, int depth, boolean tt) {
@@ -177,7 +187,7 @@ public class SearchOptimizationsCheck {
 
 	// ------------------------------------------------------- indice mossa e ordinamento
 
-	/** moveIndex (due charAt) deve coincidere con la definizione via getter di Action (riga*9+colonna). */
+	/** moveIndex (mossa compatta) deve coincidere con la definizione indipendente via getter di Action (riga*9+colonna). */
 	static void checkMoveIndex(List<State> positions) {
 		int checked = 0, before = failures;
 		for (State s : positions) {
@@ -186,15 +196,15 @@ public class SearchOptimizationsCheck {
 				c.setTurn(t);
 				for (Action a : AshtonRules.generateMoves(c)) {
 					int expected = (a.getRowFrom() * 9 + a.getColumnFrom()) * 81 + a.getRowTo() * 9 + a.getColumnTo();
-					if (Negamax.moveIndex(a) != expected) {
-						fail("moveIndex " + Negamax.moveIndex(a) + " != " + expected + " per " + a.getFrom() + "->" + a.getTo());
+					if (Negamax.moveIndex(Move.fromAction(a)) != expected) {
+						fail("moveIndex " + Negamax.moveIndex(Move.fromAction(a)) + " != " + expected + " per " + a.getFrom() + "->" + a.getTo());
 						return;
 					}
 					checked++;
 				}
 			}
 		}
-		System.out.printf("%s %-30s %d mosse: moveIndex coincide con i getter di Action%n", failures == before ? "OK  " : "FAIL",
+		System.out.printf("%s %-30s %d mosse: moveIndex coincide con la definizione via getter di Action%n", failures == before ? "OK  " : "FAIL",
 				"[indice mossa]", checked);
 	}
 
@@ -225,43 +235,45 @@ public class SearchOptimizationsCheck {
 				}
 				Negamax n = new Negamax(new SimpleEvaluator(), 6, false, 0, true, Negamax.ORDER_DEFAULT).setThreads(1);
 				int ply = 1 + rnd.nextInt(4);
+				final int cnt = moves.size();
 				// stato "sporco": killer e history casuali, anche con valori uguali tra mosse diverse (pareggi)
-				Action ka = moves.get(rnd.nextInt(moves.size())), kb = moves.get(rnd.nextInt(moves.size()));
-				n.killers[ply][0] = Negamax.moveIndex(ka);
-				n.killers[ply][1] = Negamax.moveIndex(kb);
+				Action ka = moves.get(rnd.nextInt(cnt)), kb = moves.get(rnd.nextInt(cnt));
+				n.killers[ply][0] = Negamax.moveIndex(Move.fromAction(ka));
+				n.killers[ply][1] = Negamax.moveIndex(Move.fromAction(kb));
 				for (Action a : moves) {
-					n.historyScore[side][Negamax.moveIndex(a)] = rnd.nextInt(4) == 0 ? 0 : rnd.nextInt(1000);
+					n.historyScore[side][Negamax.moveIndex(Move.fromAction(a))] = rnd.nextInt(4) == 0 ? 0 : rnd.nextInt(1000);
 				}
-				int ttPacked = rnd.nextBoolean() ? TranspositionTable.packMove(moves.get(rnd.nextInt(moves.size()))) : -1;
-				int ttIdx = -1;
-				if (ttPacked >= 0) {
-					ttIdx = (TranspositionTable.packedFromRow(ttPacked) * 9 + TranspositionTable.packedFromCol(ttPacked)) * 81
-							+ TranspositionTable.packedToRow(ttPacked) * 9 + TranspositionTable.packedToCol(ttPacked);
+				Action ttAction = rnd.nextBoolean() ? moves.get(rnd.nextInt(cnt)) : null;
+				int ttPacked = ttAction != null ? Move.fromAction(ttAction) : -1;
+				// indice atteso della mossa TT, calcolato in modo indipendente dai getter dell'azione
+				int ttIdx = ttAction == null ? -1
+						: (ttAction.getRowFrom() * 9 + ttAction.getColumnFrom()) * 81 + ttAction.getRowTo() * 9 + ttAction.getColumnTo();
+				int[] mv = new int[cnt];
+				for (int i = 0; i < cnt; i++) {
+					mv[i] = Move.fromAction(moves.get(i));
 				}
-				List<Action> original = new ArrayList<>(moves);
-				int[] sc = n.computeOrderScores(moves, side, ply, ttPacked);
-				List<Action> seq = new ArrayList<>();
-				for (int i = 0; i < moves.size(); i++) {
-					Negamax.selectBest(moves, sc, i);
-					seq.add(moves.get(i));
+				int[] original = mv.clone();
+				int[] sc = new int[cnt];
+				n.computeOrderScores(mv, cnt, side, ply, ttPacked, sc);
+				int[] seq = new int[cnt];
+				for (int i = 0; i < cnt; i++) {
+					Negamax.selectBest(mv, sc, i, cnt);
+					seq[i] = mv[i];
 				}
 				checks++;
-				// (a) permutazione: stesso insieme di mosse, nessuna duplicata (si confrontano i riferimenti)
-				List<Action> a1 = new ArrayList<>(seq), a2 = new ArrayList<>(original);
-				boolean perm = a1.size() == a2.size();
-				for (Action a : a2) {
-					perm &= a1.remove(a);
-				}
-				perm &= a1.isEmpty();
-				if (!perm) {
+				// (a) permutazione: stesso insieme di mosse, nessuna duplicata
+				int[] sortedSeq = seq.clone(), sortedOrig = original.clone();
+				Arrays.sort(sortedSeq);
+				Arrays.sort(sortedOrig);
+				if (!Arrays.equals(sortedSeq, sortedOrig)) {
 					fail("l'ordinamento NON e' una permutazione delle mosse generate");
 					return;
 				}
 				// (b) punteggi non crescenti lungo la sequenza (ricalcolati in modo indipendente)
 				int k0 = n.killers[ply][0], k1 = n.killers[ply][1];
 				long prev = Long.MAX_VALUE;
-				for (Action a : seq) {
-					long e = expectedScore(a, ttIdx, k0, k1, n.historyScore[side]);
+				for (int m : seq) {
+					long e = expectedScore(Move.toAction(m, c.getTurn()), ttIdx, k0, k1, n.historyScore[side]);
 					if (e > prev) {
 						fail("ordine non decrescente violato: " + e + " dopo " + prev);
 						return;
@@ -270,7 +282,7 @@ public class SearchOptimizationsCheck {
 				}
 				// (c) la mossa TT e' la prima se presente
 				if (ttPacked >= 0) {
-					Action f = seq.get(0);
+					Action f = Move.toAction(seq[0], c.getTurn());
 					int fi = (f.getRowFrom() * 9 + f.getColumnFrom()) * 81 + f.getRowTo() * 9 + f.getColumnTo();
 					if (fi != ttIdx) {
 						fail("la mossa TT non e' la prima");
@@ -312,15 +324,15 @@ public class SearchOptimizationsCheck {
 				for (Cfg cfg : all) {
 					final Set<Long> seen = new HashSet<>();
 					Evaluator recording = st -> {
-						seen.add(ZobristHasher.fullHash(st));
+						seen.add(st.zobristHash);
 						return 0.0;
 					};
 					Negamax n = cfg.make(recording, 4, false);
 					// killer e history casuali (stato "sporco") per esercitare davvero la selezione
 					for (int[] k : n.killers) {
 						List<Action> mv = AshtonRules.generateMoves(root);
-						k[0] = Negamax.moveIndex(mv.get(rnd.nextInt(mv.size())));
-						k[1] = Negamax.moveIndex(mv.get(rnd.nextInt(mv.size())));
+						k[0] = Negamax.moveIndex(Move.fromAction(mv.get(rnd.nextInt(mv.size()))));
+						k[1] = Negamax.moveIndex(Move.fromAction(mv.get(rnd.nextInt(mv.size()))));
 					}
 					for (int sd = 0; sd < 2; sd++) {
 						for (int i = 0; i < n.historyScore[sd].length; i++) {
@@ -328,7 +340,8 @@ public class SearchOptimizationsCheck {
 						}
 					}
 					int persp = side == 0 ? 1 : -1;
-					n.negamax(root, 1, -INF, INF, persp, ZobristHasher.fullHash(root), new ArrayList<Long>());
+					n.installForTest(FastState.fromState(root), new ArrayList<Long>(), 1);
+					n.negamax(1, -INF, INF, persp, 0);
 					checks++;
 					if (!seen.equals(expected)) {
 						fail(cfg.name + ": a profondita' 1 sono stati valutati " + seen.size() + " figli distinti su " + expected.size() + " attesi");
@@ -427,7 +440,7 @@ public class SearchOptimizationsCheck {
 							+ cand.lastScore);
 				}
 				// e nessuna altra mossa deve valere di piu' (verifica indipendente del massimo)
-				if (d <= 3 && cfg == CFGS[3]) {
+				if (d <= 3 && (cfg == CFGS[3] || cfg.exhaustive)) {
 					for (Action m : AshtonRules.generateMoves(pos)) {
 						double vm = exactValueOfMove(ev, pos, m, cand.lastDepthReached, new ArrayList<Long>());
 						if (vm > cand.lastScore + 1e-9) {
