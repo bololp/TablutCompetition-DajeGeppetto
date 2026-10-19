@@ -127,7 +127,7 @@ public class TablutNegamaxClient extends TablutClient {
 		int threads = Negamax.defaultThreads();
 		int order = Negamax.ORDER_DEFAULT;
 		String orderName = "base";
-		int ttLog2 = 22;
+		int ttLog2 = 26;
 		boolean twoSlot = false;
 		long margin = defaultMarginMillis(timeout);
 		String weightsFile = null;
@@ -141,7 +141,7 @@ public class TablutNegamaxClient extends TablutClient {
 					order = OrderingSpec.parse(name); // lancia se il nome e' sconosciuto: allora order e orderName restano quelli di prima
 					orderName = name;
 				} else if (low.startsWith("tt=")) {
-					ttLog2 = Math.max(12, Math.min(26, Integer.parseInt(args[i].substring("tt=".length()).trim())));
+					ttLog2 = Math.max(12, Math.min(28, Integer.parseInt(args[i].substring("tt=".length()).trim())));
 				} else if (low.startsWith("tt2=")) {
 					twoSlot = Boolean.parseBoolean(args[i].substring("tt2=".length()).trim());
 				} else if (low.startsWith("margin=")) {
