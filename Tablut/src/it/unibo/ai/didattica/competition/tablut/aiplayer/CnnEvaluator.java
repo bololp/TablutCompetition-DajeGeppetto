@@ -3,6 +3,7 @@ package it.unibo.ai.didattica.competition.tablut.aiplayer;
 import java.io.IOException;
 
 import it.unibo.ai.didattica.competition.tablut.domain.State;
+import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 
 /**
  * {@link Evaluator} basato su {@link ConvNet}. Sostituisce {@link NeuralEvaluator} (o lo affianca, per confronto) in
@@ -113,15 +114,20 @@ public class CnnEvaluator implements Evaluator {
 	}
 
 	/** Calcola in {@code out} (lunghezza = {@code nFeat}) le feature a mano compattate, nell'ordine atteso dalla rete. */
-	public void extractFeatures(State state, TablutFeatures.Workspace fws, double[] fullScratch, float[] out) {
+	public void extractFeatures(FastState state, TablutFeatures.Workspace fws, double[] fullScratch, float[] out) {
 		TablutFeatures.extract(state, fws, fullScratch, featureGroups);
 		for (int i = 0; i < cols.length; i++) {
 			out[i] = (float) fullScratch[cols[i]];
 		}
 	}
 
+	/** Come {@link #extractFeatures(FastState, TablutFeatures.Workspace, double[], float[])} per uno {@link State} del dominio (converte: alloca). */
+	public void extractFeatures(State state, TablutFeatures.Workspace fws, double[] fullScratch, float[] out) {
+		extractFeatures(FastState.fromState(state), fws, fullScratch, out);
+	}
+
 	@Override
-	public double evaluate(State state) {
+	public double evaluate(FastState state) {
 		Ctx c = ctx.get();
 		c.ws.setBoard(state);
 		if (cols.length > 0) {

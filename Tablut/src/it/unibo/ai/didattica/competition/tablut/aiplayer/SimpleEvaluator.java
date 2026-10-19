@@ -1,7 +1,7 @@
 package it.unibo.ai.didattica.competition.tablut.aiplayer;
 
-import it.unibo.ai.didattica.competition.tablut.domain.State;
-import it.unibo.ai.didattica.competition.tablut.domain.State.Pawn;
+import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
+import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 
 /**
  * Euristica "classica" scritta a mano. Non e' pensata per essere perfetta, ma
@@ -16,10 +16,15 @@ import it.unibo.ai.didattica.competition.tablut.domain.State.Pawn;
  * contemporaneamente sono spesso gia' decisive). Per questo
  * {@code kingOpenLaneWeight} ha un peso molto piu' alto di
  * {@code materialWeight}.
+ * <p>
+ * Lavora su {@link FastState}: il materiale viene dai conteggi gia' mantenuti da
+ * {@code makeMove} e la cella del Re e' un campo, quindi non c'e' nessuna scansione per
+ * contare le pedine. La semantica e il risultato numerico (anche l'ordine delle somme in
+ * virgola mobile) sono IDENTICI alla versione storica su {@code State}, comprese le sue
+ * scelte note: una corsia e' "aperta" anche se termina su una citadel (si veda
+ * MLP_REDESIGN.md), e il trono vuoto ferma la corsia del Re.
  */
 public class SimpleEvaluator implements Evaluator {
-
-	private static final int[][] DIRS = { { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } };
 
 	/** Valore di una pedina di differenza (bianche - nere). */
 	public double materialWeight = 10.0;
@@ -32,78 +37,53 @@ public class SimpleEvaluator implements Evaluator {
 	/** Piccolo bonus posizionale per il Nero che controlla il centro (fase iniziale). */
 	public double centralControlWeight = 1.0;
 
-	private static boolean inBounds(int r, int c) {
-		return r >= 0 && r < AshtonRules.SIZE && c >= 0 && c < AshtonRules.SIZE;
-	}
-
 	@Override
-	public double evaluate(State state) {
-		Pawn[][] b = state.getBoard();
-		int kr = -1, kc = -1;
-		int white = 0, black = 0;
-
-		for (int r = 0; r < AshtonRules.SIZE; r++) {
-			for (int c = 0; c < AshtonRules.SIZE; c++) {
-				Pawn p = b[r][c];
-				if (p == Pawn.WHITE) {
-					white++;
-				} else if (p == Pawn.BLACK) {
-					black++;
-				} else if (p == Pawn.KING) {
-					kr = r;
-					kc = c;
-				}
-			}
-		}
-
-		if (kr == -1) {
+	public double evaluate(FastState state) {
+		final byte[] b = state.board;
+		final int ksq = state.kingSquare;
+		if (ksq < 0) {
 			// Non dovrebbe mai capitare in uno stato non terminale: la cattura del
-			// Re e' gia' gestita come BLACKWIN direttamente da AshtonRules/Negamax.
+			// Re e' gia' gestita come BLACKWIN direttamente da FastState/Negamax.
 			// Per sicurezza, se succedesse comunque, trattiamolo come pessimo per il Bianco.
 			return -100000;
 		}
 
-		double score = materialWeight * (white - black);
+		double score = materialWeight * (state.whiteCount - state.blackCount);
 
 		int openLanes = 0;
 		int freedom = 0;
-		for (int[] d : DIRS) {
-			int step = 1;
-			while (true) {
-				int nr = kr + d[0] * step;
-				int nc = kc + d[1] * step;
-				if (!inBounds(nr, nc)) {
-					break;
-				}
-				if (b[nr][nc] != Pawn.EMPTY) {
-					break;
+		for (int d = 0; d < BoardConstants.NUM_DIRS; d++) {
+			final int steps = BoardConstants.STEPS[d][ksq];
+			final int off = BoardConstants.DIR_OFFSET[d];
+			int sq = ksq;
+			for (int step = 1; step <= steps; step++) {
+				sq += off;
+				if (b[sq] != BoardConstants.EMPTY || sq == BoardConstants.THRONE) {
+					break; // pedina, oppure trono vuoto
 				}
 				freedom++;
-				if (nr == 0 || nr == AshtonRules.SIZE - 1 || nc == 0 || nc == AshtonRules.SIZE - 1) {
+				if (BoardConstants.IS_EDGE[sq]) {
 					openLanes++;
 					break;
 				}
-				step++;
 			}
 		}
 		score += kingOpenLaneWeight * openLanes;
 		score += kingFreedomWeight * freedom;
 
 		int danger = 0;
-		for (int[] d : DIRS) {
-			int nr = kr + d[0], nc = kc + d[1];
-			if (inBounds(nr, nc) && b[nr][nc] == Pawn.BLACK) {
+		for (int d = 0; d < BoardConstants.NUM_DIRS; d++) {
+			if (BoardConstants.STEPS[d][ksq] >= 1 && b[ksq + BoardConstants.DIR_OFFSET[d]] == BoardConstants.BLACK) {
 				danger++;
 			}
 		}
 		score -= kingDangerWeight * danger;
 
-		for (int r = 0; r < AshtonRules.SIZE; r++) {
-			for (int c = 0; c < AshtonRules.SIZE; c++) {
-				if (b[r][c] == Pawn.BLACK) {
-					double dist = Math.abs(r - 4) + Math.abs(c - 4);
-					score -= centralControlWeight * (8 - dist) / 8.0;
-				}
+		// stesso ordine di somma (cella per cella) della versione storica: il risultato e' identico al bit
+		for (int sq = 0; sq < BoardConstants.NUM_SQUARES; sq++) {
+			if (b[sq] == BoardConstants.BLACK) {
+				double dist = Math.abs(BoardConstants.ROW[sq] - 4) + Math.abs(BoardConstants.COL[sq] - 4);
+				score -= centralControlWeight * (8 - dist) / 8.0;
 			}
 		}
 

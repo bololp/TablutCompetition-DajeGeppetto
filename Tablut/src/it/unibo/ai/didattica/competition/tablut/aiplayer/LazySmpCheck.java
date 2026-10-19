@@ -12,6 +12,7 @@ import java.util.concurrent.locks.LockSupport;
 import it.unibo.ai.didattica.competition.tablut.domain.Action;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
+import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 
 /**
  * Test del Lazy SMP e della transposition table lock-free (white-box: stesso package di {@link Negamax}).
@@ -548,7 +549,7 @@ public class LazySmpCheck {
 		int before = failures;
 		Evaluator slowHelpers = new Evaluator() {
 			@Override
-			public double evaluate(State st) {
+			public double evaluate(FastState st) {
 				if (isHelperThread()) {
 					LockSupport.parkNanos(100_000); // ~100 us per valutazione: un helper da solo impiegherebbe secondi
 				}
@@ -619,7 +620,7 @@ public class LazySmpCheck {
 		int before = failures, withErrors = 0, runs = 0;
 		Evaluator failing = new Evaluator() {
 			@Override
-			public double evaluate(State st) {
+			public double evaluate(FastState st) {
 				if (isHelperThread()) {
 					throw new IllegalStateException("errore simulato in un helper");
 				}
@@ -679,7 +680,7 @@ public class LazySmpCheck {
 		int before = failures, adopted = 0, trials = 0;
 		Evaluator slowMain = new Evaluator() {
 			@Override
-			public double evaluate(State st) {
+			public double evaluate(FastState st) {
 				if (!isHelperThread()) {
 					LockSupport.parkNanos(3_000_000); // 3 ms: misurato, adozione in 12 prove su 12 (con 150 us solo in 6/12)
 				}

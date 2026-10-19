@@ -4,6 +4,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
+import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+import it.unibo.ai.didattica.competition.tablut.engine.Move;
+import it.unibo.ai.didattica.competition.tablut.engine.UndoInfo;
 import it.unibo.ai.didattica.competition.tablut.domain.Action;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Pawn;
@@ -154,6 +157,13 @@ public class RepetitionAndStalemateCheck {
 		return null;
 	}
 
+	/** Hash di FastState dopo aver giocato {@code m} su una COPIA di {@code root} (la radice non si tocca). */
+	private static long hashAfter(FastState root, Action m) {
+		FastState c = root.duplicate();
+		c.makeMove(Move.fromAction(m), new UndoInfo());
+		return c.zobristHash;
+	}
+
 	private static Action findReverse(State state, Action original) {
 		for (Action a : AshtonRules.generateMoves(state)) {
 			if (a.getFrom().equals(original.getTo()) && a.getTo().equals(original.getFrom())) {
@@ -201,9 +211,14 @@ public class RepetitionAndStalemateCheck {
 		check("la mossa finale ricrea esattamente l'hash della posizione iniziale", h4 == h0);
 
 		long counterBefore = n.repetitionEventCounter;
-		double score = n.exploreChild(p3, p4, m4, 3, -1e9, 1e9, 1, h4, history);
+		FastState root = FastState.fromState(p3);
+		n.installForTest(root, history, 3);
+		check("l'hash incrementale di FastState dopo la mossa coincide con quello storico", hashAfter(root, m4) == h4);
+		double score = n.exploreChild(Move.fromAction(m4), 3, -1e9, 1e9, 1, 0);
 		check("con la storia corretta, la ripetizione e' un pareggio esatto (punteggio 0)", score == 0.0);
 		check("il contatore di ripetizioni e' stato incrementato", n.repetitionEventCounter == counterBefore + 1);
+		check("make/unmake: la posizione di lavoro e' tornata quella del genitore", n.workingState().samePosition(root));
+		check("la storia e' tornata alla lunghezza iniziale", n.historyLengthForTest() == history.size());
 	}
 
 	private static void testNoRepetitionWithoutHistory(State p3, Action m4) {
@@ -217,9 +232,12 @@ public class RepetitionAndStalemateCheck {
 		// STESSA posizione, STESSA mossa, ma SENZA storia: non deve essere
 		// affatto trattata come ripetizione (altrimenti scatterebbe per
 		// coincidenza sulla board, non per la vera storia della partita).
-		double score = n.exploreChild(p3, p4, m4, 0, -1e9, 1e9, 1, h4, new ArrayList<Long>());
+		FastState root = FastState.fromState(p3);
+		n.installForTest(root, new ArrayList<Long>(), 0);
+		double score = n.exploreChild(Move.fromAction(m4), 0, -1e9, 1e9, 1, 0);
 		check("senza storia, la stessa posizione NON e' trattata come pareggio", score != 0.0);
 		check("il contatore di ripetizioni non e' cambiato", n.repetitionEventCounter == counterBefore);
+		check("make/unmake: la posizione di lavoro e' tornata quella del genitore", n.workingState().samePosition(root));
 	}
 
 	// ------------------------------------------------------------------
@@ -299,7 +317,9 @@ public class RepetitionAndStalemateCheck {
 		Negamax n = new Negamax(new SimpleEvaluator(), 5).setThreads(1);
 		long hash = ZobristHasher.fullHash(s);
 		int depth = 3;
-		double score = n.negamax(s, depth, -1e9, 1e9, 1, hash, new ArrayList<Long>());
+		n.installForTest(FastState.fromState(s), new ArrayList<Long>(), depth);
+		check("l'hash di FastState coincide con quello storico anche per questa posizione artificiale", n.workingState().zobristHash == hash);
+		double score = n.negamax(depth, -1e9, 1e9, 1, 0);
 		double expected = -(Negamax.WIN_SCORE + depth); // perspective=1 (bianco): sconfitta = punteggio molto negativo
 		check("punteggio esatto per sconfitta immediata (atteso " + expected + ", ottenuto " + score + ")",
 				score == expected);
@@ -312,7 +332,8 @@ public class RepetitionAndStalemateCheck {
 		long hash = ZobristHasher.fullHash(s);
 		int depth = 3;
 
-		double first = n.negamax(s, depth, -1e9, 1e9, 1, hash, new ArrayList<Long>());
+		n.installForTest(FastState.fromState(s), new ArrayList<Long>(), depth);
+		double first = n.negamax(depth, -1e9, 1e9, 1, 0);
 
 		TranspositionTable.ProbeResult probe = n.tt.probe(hash, depth);
 		check("la posizione senza mosse legali e' stata memorizzata in TT", probe.hit);
@@ -320,7 +341,7 @@ public class RepetitionAndStalemateCheck {
 		check("memorizzata come valore ESATTO (non un bound)", probe.flag == TranspositionTable.EXACT);
 		check("il valore in cache coincide con quello calcolato", probe.score == first);
 
-		double second = n.negamax(s, depth, -1e9, 1e9, 1, hash, new ArrayList<Long>());
+		double second = n.negamax(depth, -1e9, 1e9, 1, 0);
 		check("la seconda chiamata (servita dalla cache) da' lo stesso risultato", second == first);
 	}
 }

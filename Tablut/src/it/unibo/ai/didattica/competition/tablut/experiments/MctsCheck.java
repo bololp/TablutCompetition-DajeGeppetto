@@ -96,7 +96,7 @@ public class MctsCheck {
 			final double cc = c;
 			MctsPlayer mc = new MctsPlayer(new it.unibo.ai.didattica.competition.tablut.aiplayer.Evaluator() {
 				@Override
-				public double evaluate(State st) {
+				public double evaluate(it.unibo.ai.didattica.competition.tablut.engine.FastState st) {
 					return cc;
 				}
 			}, 1000.0, 1.0, 0.2);

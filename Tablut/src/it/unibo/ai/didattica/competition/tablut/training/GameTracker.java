@@ -4,10 +4,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 import it.unibo.ai.didattica.competition.tablut.aiplayer.AshtonRules;
-import it.unibo.ai.didattica.competition.tablut.aiplayer.ZobristHasher;
 import it.unibo.ai.didattica.competition.tablut.domain.Action;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
+import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 
 /**
  * Regole di FINE PARTITA per il self-play, coerenti con la ricerca ({@code Negamax}) e con la regola ufficiale. Prima di
@@ -60,7 +60,7 @@ public final class GameTracker {
 
 	/** @param initial posizione di partenza (viene inserita nella storia) */
 	public GameTracker(State initial) {
-		history.add(ZobristHasher.fullHash(initial));
+		history.add(FastState.hashOf(initial));
 	}
 
 	/**
@@ -86,7 +86,7 @@ public final class GameTracker {
 		if (AshtonRules.isTerminal(next)) {
 			return next;
 		}
-		long h = ZobristHasher.fullHash(next);
+		long h = FastState.hashOf(next);
 		if (AshtonRules.wasCapture(state, next, move)) {
 			history.clear();
 			history.add(h);

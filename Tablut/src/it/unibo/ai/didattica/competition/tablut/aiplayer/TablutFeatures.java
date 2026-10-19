@@ -3,10 +3,10 @@ package it.unibo.ai.didattica.competition.tablut.aiplayer;
 import java.util.Arrays;
 
 import it.unibo.ai.didattica.competition.tablut.domain.State;
-import it.unibo.ai.didattica.competition.tablut.domain.State.Pawn;
+import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 
 /**
- * Trasforma uno {@link State} nel vettore di feature in input alla rete
+ * Trasforma una posizione ({@link FastState}, o uno {@link State} del dominio) nel vettore di feature in input alla rete
  * ({@link MLP}, {@link NeuralEvaluator}). E' l'UNICO posto che sa come si
  * costruisce quel vettore: training e gioco chiamano entrambi
  * {@link #extract}, quindi restano coerenti per costruzione.
@@ -280,8 +280,8 @@ public final class TablutFeatures {
 
 	// -------------------------------------------------------------- tabelle
 	// Scacchiera 9x9 dentro una griglia 11x11 con bordo sentinella OUT: gli
-	// indici sono p = (r+1)*11 + (c+1). I codici coincidono con Pawn.ordinal()
-	// (EMPTY, WHITE, BLACK, THRONE, KING): lo verifica FeaturesCheck. In piu':
+	// indici sono p = (r+1)*11 + (c+1). I codici coincidono con Pawn.ordinal() e con quelli
+	// di BoardConstants (EMPTY, WHITE, BLACK, THRONE, KING): lo verifica FeaturesCheck. In piu':
 	// OUT = bordo sentinella e CEMPTY = citadel VUOTA. Codificare le citadel
 	// vuote a parte rende il caso comune (pezzo che non parte da una citadel)
 	// un loop stretto "while (b[q] == EMPTY)": una citadel lo ferma da sola.
@@ -389,6 +389,11 @@ public final class TablutFeatures {
 
 	/** Comoda per i test: alloca workspace e vettore ad ogni chiamata (NON usare nel ciclo caldo). */
 	public static double[] extract(State state) {
+		return extract(FastState.fromState(state));
+	}
+
+	/** Come {@link #extract(State)} per una posizione {@link FastState}. */
+	public static double[] extract(FastState state) {
 		double[] out = new double[NUM_FEATURES];
 		extract(state, newWorkspace(), out, G_ALL);
 		return out;
@@ -397,12 +402,21 @@ public final class TablutFeatures {
 	// --------------------------------------------------------------- estrazione
 
 	/**
-	 * Riempie {@code out[0..NUM_FEATURES)} con le feature di {@code state}.
+	 * Come {@link #extract(FastState, Workspace, double[], int)} per uno {@link State} del dominio: lo converte (alloca) e
+	 * delega. E' l'unica implementazione delle feature: training e gioco restano coerenti per costruzione.
+	 */
+	public static void extract(State state, Workspace ws, double[] out, int groups) {
+		extract(FastState.fromState(state), ws, out, groups);
+	}
+
+	/**
+	 * Riempie {@code out[0..NUM_FEATURES)} con le feature di {@code state}. Nessuna allocazione: la scacchiera compatta
+	 * viene copiata nel buffer con bordo sentinella del {@link Workspace} e tutto il resto lavora su quello.
 	 *
 	 * @param groups maschera di gruppi da calcolare ({@link #G_ALL} in produzione);
 	 *               le feature dei gruppi esclusi restano a 0
 	 */
-	public static void extract(State state, Workspace ws, double[] out, int groups) {
+	public static void extract(FastState state, Workspace ws, double[] out, int groups) {
 		Arrays.fill(out, 0, NUM_FEATURES, 0.0);
 		if (!loadBoard(state, ws)) {
 			// Re assente: non dovrebbe mai essere valutato (BLACKWIN gestito dalla ricerca).
@@ -430,16 +444,17 @@ public final class TablutFeatures {
 	}
 
 	/** Copia la scacchiera nel buffer padded e costruisce le liste dei pezzi. false se manca il Re. */
-	private static boolean loadBoard(State state, Workspace ws) {
+	private static boolean loadBoard(FastState state, Workspace ws) {
 		final byte[] b = ws.b;
 		final int[] wl = ws.wl, bl = ws.bl;
-		Pawn[][] board = state.getBoard();
+		final byte[] src = state.board;
 		int nW = 0, nB = 0, kp = -1;
 		for (int r = 0; r < 9; r++) {
-			Pawn[] row = board[r];
 			int base = (r + 1) * W + 1;
+			int sbase = r * 9;
 			for (int c = 0; c < 9; c++) {
-				int v = row[c].ordinal();
+				// i codici di FastState coincidono con quelli dell'estrattore (0 vuoto, 1 bianco, 2 nero, 4 re)
+				int v = src[sbase + c];
 				b[base + c] = (byte) v;
 				if (v == WHITE) {
 					wl[nW++] = base + c;
@@ -449,6 +464,9 @@ public final class TablutFeatures {
 					kp = base + c;
 				}
 			}
+		}
+		if (b[THRONE_P] == EMPTY) {
+			b[THRONE_P] = THRONE; // in FastState il trono vuoto e' la cella 40 vuota; qui ha il suo codice
 		}
 		for (int p : CIT_CELLS) {
 			if (b[p] == EMPTY) {

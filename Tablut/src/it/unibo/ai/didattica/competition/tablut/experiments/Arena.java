@@ -27,7 +27,7 @@ public class Arena {
         Class<?> ne = cl.loadClass(PKG + "NeuralEvaluator");
         final Object inst = ne.getMethod("fromFile", String.class).invoke(null, weights);
         final Method ev = ne.getMethod("evaluate", State.class);
-        return s -> { try { return (Double) ev.invoke(inst, s); } catch (Exception e) { throw new RuntimeException(e); } };
+        return s -> { try { return (Double) ev.invoke(inst, s.toState()); } catch (Exception e) { throw new RuntimeException(e); } };
     }
 
     static Evaluator build(String spec) throws Exception {
@@ -35,7 +35,7 @@ public class Arena {
         if (spec.startsWith("legacy:")) return legacyEvaluator("/home/claude/build0", spec.substring(7));
         if (spec.startsWith("old16:")) { // vecchie feature v1 + rete 24-12 tanh, sul MLP veloce
             final MLP net = MLP.load(spec.substring(6)).net; final MLP.Scratch sc = net.newScratch();
-            return s -> net.forward(OldFeatures.extract(s), 0, sc) * 1000.0;
+            return s -> net.forward(OldFeatures.extract(s.toState()), 0, sc) * 1000.0;
         }
         return NeuralEvaluator.fromFile(spec);
     }

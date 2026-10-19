@@ -10,7 +10,8 @@ import java.util.Random;
 import java.util.StringTokenizer;
 
 import it.unibo.ai.didattica.competition.tablut.domain.State;
-import it.unibo.ai.didattica.competition.tablut.domain.State.Pawn;
+import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
+import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 
 /**
  * Rete convoluzionale per valutare una posizione di Tablut, progettata per la CPU (nessuna GPU, Java puro).
@@ -380,19 +381,24 @@ public final class ConvNet {
 			}
 		}
 
-		/** Imposta le pedine dalla scacchiera di {@code s} (turno ignorato: il ruolo si passa a {@link ConvNet#forward}). */
+		/** Imposta le pedine dalla scacchiera di {@code s} (turno ignorato: il ruolo si passa a {@link ConvNet#forward}). Converte: alloca. */
 		public void setBoard(State s) {
-			Pawn[][] b = s.getBoard();
+			setBoard(FastState.fromState(s));
+		}
+
+		/** Imposta le pedine dalla scacchiera compatta di {@code s} (turno ignorato: il ruolo si passa a {@link ConvNet#forward}). */
+		public void setBoard(FastState s) {
+			final byte[] b = s.board;
 			int n = 0;
 			for (int r = 0; r < N; r++) {
 				for (int c = 0; c < N; c++) {
-					Pawn p = b[r][c];
+					final byte p = b[r * N + c];
 					int t;
-					if (p == Pawn.WHITE) {
+					if (p == BoardConstants.WHITE) {
 						t = 0;
-					} else if (p == Pawn.BLACK) {
+					} else if (p == BoardConstants.BLACK) {
 						t = 1;
-					} else if (p == Pawn.KING) {
+					} else if (p == BoardConstants.KING) {
 						t = 2;
 					} else {
 						continue;

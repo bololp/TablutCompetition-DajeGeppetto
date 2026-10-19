@@ -1,12 +1,14 @@
 package it.unibo.ai.didattica.competition.tablut.experiments;
 
-import java.util.List;
+import java.util.Arrays;
 
-import it.unibo.ai.didattica.competition.tablut.aiplayer.AshtonRules;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Evaluator;
 import it.unibo.ai.didattica.competition.tablut.domain.Action;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
-import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
+import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
+import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+import it.unibo.ai.didattica.competition.tablut.engine.Move;
+import it.unibo.ai.didattica.competition.tablut.engine.UndoInfo;
 
 /**
  * Monte Carlo Tree Search (PUCT) SPERIMENTALE, scritto solo per rispondere a "conviene passare a un MCTS?" a parita' di evaluator
@@ -23,6 +25,9 @@ import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
  * <li><b>Valori</b> in [-1,1] dal punto di vista del Bianco: {@code evaluate()/valueScale} troncato (per gli evaluator neurali,
  * che escono in (-1,1)*1000, {@code valueScale=1000}). Terminali esatti: re sul bordo +1, re catturato -1, chi non ha mosse perde.</li>
  * <li><b>Mossa finale</b>: il figlio piu' visitato del radice (a parita', il Q migliore).</li>
+ * <li><b>Stato</b>: come {@code Negamax}, lavora su {@link FastState}. Ogni nodo conserva la propria posizione (una copia di
+ * 81 byte); i figli si valutano eseguendo e annullando la mossa SUL POSTO nella posizione del genitore ({@code makeMove} /
+ * {@code unmakeMove}: nessuno stato allocato per valutare una mossa) e solo i figli davvero visitati diventano nodi.</li>
  * </ul>
  * <h3>Limiti dichiarati</h3>
  * Nessuna ripetizione di posizione (come {@code EqualTimeArena}, che pareggia a 160 semi-mosse), nessun solver di posizioni risolte,
@@ -33,6 +38,8 @@ public class MctsPlayer {
 
 	private final Evaluator evaluator;
 	private final double valueScale, cPuct, tau;
+	private final int[] moveBuf = new int[FastState.MAX_MOVES];
+	private final UndoInfo undo = new UndoInfo();
 
 	/** Statistiche dell'ultima ricerca. */
 	public long lastSims, lastEvals;
@@ -48,10 +55,10 @@ public class MctsPlayer {
 	}
 
 	private static final class Node {
-		final State state;
+		final FastState state;
 		final boolean terminal;
 		final double termValue; // dal punto di vista del Bianco, valido se terminal
-		Action[] moves;
+		int[] moves; // mosse compatte (Move), nell'ordine di generazione
 		double[] stat; // valore statico di ciascun figlio (Bianco)
 		double[] prior;
 		Node[] kids;
@@ -59,28 +66,27 @@ public class MctsPlayer {
 		int n;
 		double sum; // somma dei valori (Bianco)
 
-		Node(State s, boolean terminal, double termValue) {
+		Node(FastState s, boolean terminal, double termValue) {
 			this.state = s;
 			this.terminal = terminal;
 			this.termValue = termValue;
 		}
 	}
 
-	private static Node makeNode(State s) {
-		Turn t = s.getTurn();
-		if (t == Turn.WHITEWIN) {
+	private static Node makeNode(FastState s) {
+		if (s.winner == FastState.WINNER_WHITE) {
 			return new Node(s, true, 1.0);
 		}
-		if (t == Turn.BLACKWIN) {
+		if (s.winner == FastState.WINNER_BLACK) {
 			return new Node(s, true, -1.0);
 		}
-		if (t == Turn.DRAW) {
+		if (s.winner == FastState.WINNER_DRAW) {
 			return new Node(s, true, 0.0);
 		}
 		return new Node(s, false, 0.0);
 	}
 
-	private double staticValue(State s) {
+	private double staticValue(FastState s) {
 		lastEvals++;
 		double v = evaluator.evaluate(s) / valueScale;
 		return v > 1 ? 1 : (v < -1 ? -1 : v);
@@ -88,27 +94,36 @@ public class MctsPlayer {
 
 	/** Genera le mosse e valuta tutti i figli. Ritorna il valore del nodo (Bianco): il migliore dei figli per chi muove. */
 	private double expand(Node nd) {
-		List<Action> mv = AshtonRules.generateMoves(nd.state);
+		final FastState st = nd.state;
+		final int k = st.generateMoves(moveBuf);
 		nd.expanded = true;
-		boolean whiteMoves = nd.state.getTurn() == Turn.WHITE;
-		if (mv.isEmpty()) { // chi deve muovere e non puo' perde
-			nd.moves = new Action[0];
+		boolean whiteMoves = st.turn == BoardConstants.WHITE_TURN;
+		if (k == 0) { // chi deve muovere e non puo' perde
+			nd.moves = new int[0];
 			nd.stat = new double[0];
 			nd.prior = new double[0];
 			nd.kids = new Node[0];
 			return whiteMoves ? -1.0 : 1.0;
 		}
-		int k = mv.size();
-		nd.moves = mv.toArray(new Action[k]);
+		nd.moves = Arrays.copyOf(moveBuf, k);
 		nd.stat = new double[k];
 		nd.prior = new double[k];
 		nd.kids = new Node[k];
 		double sign = whiteMoves ? 1 : -1;
 		double best = -2, norm = 0;
 		for (int i = 0; i < k; i++) {
-			State c = AshtonRules.applyMove(nd.state, nd.moves[i]);
-			Turn t = c.getTurn();
-			double v = t == Turn.WHITEWIN ? 1.0 : t == Turn.BLACKWIN ? -1.0 : t == Turn.DRAW ? 0.0 : staticValue(c);
+			st.makeMove(nd.moves[i], undo); // il figlio si valuta sul posto e la mossa si annulla subito
+			double v;
+			if (st.winner == FastState.WINNER_WHITE) {
+				v = 1.0;
+			} else if (st.winner == FastState.WINNER_BLACK) {
+				v = -1.0;
+			} else if (st.winner == FastState.WINNER_DRAW) {
+				v = 0.0;
+			} else {
+				v = staticValue(st);
+			}
+			st.unmakeMove(nd.moves[i], undo);
 			nd.stat[i] = v;
 			best = Math.max(best, sign * v);
 		}
@@ -122,8 +137,15 @@ public class MctsPlayer {
 		return sign * best;
 	}
 
+	/** Il nodo del figlio {@code i}: una copia della posizione del genitore con la mossa eseguita. */
+	private Node childNode(Node nd, int i) {
+		FastState c = nd.state.duplicate();
+		c.makeMove(nd.moves[i], undo);
+		return makeNode(c);
+	}
+
 	private int select(Node nd) {
-		double sign = nd.state.getTurn() == Turn.WHITE ? 1 : -1;
+		double sign = nd.state.turn == BoardConstants.WHITE_TURN ? 1 : -1;
 		double sq = Math.sqrt(Math.max(1, nd.n));
 		int bi = 0;
 		double bs = -1e18;
@@ -142,17 +164,23 @@ public class MctsPlayer {
 
 	/** @return la mossa scelta, o {@code null} se non ce ne sono (posizione terminale o senza mosse) */
 	public Action findBestMove(State rootState, long budgetMillis) {
+		int mv = findBestMove(FastState.fromState(rootState), budgetMillis);
+		return mv == Move.NONE ? null : Move.toAction(mv, rootState.getTurn());
+	}
+
+	/** Come {@link #findBestMove(State, long)} su una {@link FastState} (non modificata): ritorna la mossa compatta o {@link Move#NONE}. */
+	public int findBestMove(FastState rootState, long budgetMillis) {
 		long deadline = System.nanoTime() + budgetMillis * 1_000_000L;
 		lastSims = 0;
 		lastEvals = 0;
 		lastMaxDepth = 0;
-		Node root = makeNode(rootState);
+		Node root = makeNode(rootState.duplicate()); // la radice lavora su una copia: expand() esegue/annulla mosse sul posto
 		if (root.terminal) {
-			return null;
+			return Move.NONE;
 		}
 		expand(root);
 		if (root.moves.length == 0) {
-			return null;
+			return Move.NONE;
 		}
 		Node[] path = new Node[256];
 		while (System.nanoTime() < deadline || lastSims == 0) {
@@ -164,7 +192,7 @@ public class MctsPlayer {
 					int i = select(nd);
 					Node kid = nd.kids[i];
 					if (kid == null) {
-						kid = makeNode(AshtonRules.applyMove(nd.state, nd.moves[i]));
+						kid = childNode(nd, i);
 						nd.kids[i] = kid;
 					}
 					nd = kid;
@@ -176,7 +204,7 @@ public class MctsPlayer {
 				} else if (!nd.expanded) {
 					v = expand(nd);
 				} else { // espanso senza mosse (o percorso troppo lungo)
-					v = nd.state.getTurn() == Turn.WHITE ? -1.0 : 1.0;
+					v = nd.state.turn == BoardConstants.WHITE_TURN ? -1.0 : 1.0;
 				}
 				for (int j = 0; j < d; j++) {
 					path[j].n++;
@@ -187,7 +215,7 @@ public class MctsPlayer {
 			}
 		}
 		int bi = 0, bn = -1;
-		double bq = -1e18, sign = root.state.getTurn() == Turn.WHITE ? 1 : -1;
+		double bq = -1e18, sign = root.state.turn == BoardConstants.WHITE_TURN ? 1 : -1;
 		for (int i = 0; i < root.moves.length; i++) {
 			Node kid = root.kids[i];
 			int n = kid == null ? 0 : kid.n;

@@ -4,6 +4,8 @@ import java.io.IOException;
 
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
+import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
+import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 
 /**
  * {@link Evaluator} basato su {@link MLP} + {@link TablutFeatures}. Sostituisce
@@ -116,12 +118,22 @@ public class NeuralEvaluator implements Evaluator {
 		return state.getTurn() == Turn.BLACK ? 1 : 0;
 	}
 
+	/** Head da usare per una posizione {@link FastState}: 0 = Bianco di turno, 1 = Nero di turno. */
+	public static int roleOf(FastState state) {
+		return state.turn == BoardConstants.BLACK_TURN ? 1 : 0;
+	}
+
 	/** Estrae in {@code x} (lunghezza = numero di ingressi della rete) le feature della posizione, nell'ordine atteso dalla rete. */
-	public void extractInputs(State state, TablutFeatures.Workspace ws, double[] fullScratch, double[] x) {
+	public void extractInputs(FastState state, TablutFeatures.Workspace ws, double[] fullScratch, double[] x) {
 		TablutFeatures.extract(state, ws, fullScratch, featureGroups);
 		for (int i = 0; i < cols.length; i++) {
 			x[i] = fullScratch[cols[i]];
 		}
+	}
+
+	/** Come {@link #extractInputs(FastState, TablutFeatures.Workspace, double[], double[])} per uno {@link State} del dominio (converte: alloca). */
+	public void extractInputs(State state, TablutFeatures.Workspace ws, double[] fullScratch, double[] x) {
+		extractInputs(FastState.fromState(state), ws, fullScratch, x);
 	}
 
 	/** Numero di ingressi della rete (= numero di feature attive). */
@@ -130,7 +142,7 @@ public class NeuralEvaluator implements Evaluator {
 	}
 
 	@Override
-	public double evaluate(State state) {
+	public double evaluate(FastState state) {
 		Ctx c = ctx.get();
 		extractInputs(state, c.ws, c.full, c.x);
 		return net.forward(c.x, roleOf(state), c.scratch) * outputScale;
