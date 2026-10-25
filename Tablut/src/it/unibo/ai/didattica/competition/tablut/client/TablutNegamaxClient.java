@@ -7,7 +7,11 @@ import java.util.List;
 
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Evaluator;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.EvaluatorLoader;
+import it.unibo.ai.didattica.competition.tablut.aiplayer.Mcts;
+import it.unibo.ai.didattica.competition.tablut.aiplayer.MctsConfig;
+import it.unibo.ai.didattica.competition.tablut.aiplayer.MoveSearcher;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Negamax;
+import it.unibo.ai.didattica.competition.tablut.aiplayer.NegamaxSearcher;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.OrderingSpec;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.SimpleEvaluator;
 import it.unibo.ai.didattica.competition.tablut.domain.Action;
@@ -17,7 +21,8 @@ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 import it.unibo.ai.didattica.competition.tablut.engine.Move;
 
 /**
- * Client che gioca usando Negamax + alpha-beta invece di mosse casuali.
+ * Client che gioca usando una ricerca invece di mosse casuali: Negamax + alpha-beta (default) oppure Monte Carlo Tree Search
+ * ({@code algo=mcts}, si veda {@link Mcts}).
  * Funziona indifferentemente come BIANCO o come NERO: non c'e' bisogno di due
  * classi separate (a differenza di {@code TablutRandomClient}, che duplica la
  * logica), perche' {@link Negamax} e {@link FastState} lavorano in modo simmetrico sul colore di chi
@@ -34,7 +39,8 @@ public class TablutNegamaxClient extends TablutClient {
 	/** Timeout (in secondi) dichiarato dal server/arbitro per ogni mossa. */
 	private final int timeoutSeconds;
 
-	private final Negamax negamax;
+	/** L'algoritmo di ricerca scelto: {@link NegamaxSearcher} (default) oppure {@link Mcts}. */
+	private final MoveSearcher searcher;
 
 	// --- storia REALE della partita, per il pareggio per ripetizione ---
 	// (si veda Negamax: "la stessa posizione raggiunta due volte dall'ultima
@@ -64,9 +70,45 @@ public class TablutNegamaxClient extends TablutClient {
 	/** Con una ricerca gia' configurata (ordinamento, TT, margine di sicurezza, thread): si veda {@link #main}. */
 	public TablutNegamaxClient(String player, String name, int timeout, String ipAddress, Negamax negamax)
 			throws UnknownHostException, IOException {
+		this(player, name, timeout, ipAddress, (MoveSearcher) new NegamaxSearcher(negamax));
+	}
+
+	/** Con un algoritmo di ricerca qualunque ({@link NegamaxSearcher} o {@link Mcts}), gia' configurato. */
+	public TablutNegamaxClient(String player, String name, int timeout, String ipAddress, MoveSearcher searcher)
+			throws UnknownHostException, IOException {
 		super(player, name, timeout, ipAddress);
+		if (searcher == null) {
+			throw new IllegalArgumentException("searcher nullo");
+		}
 		this.timeoutSeconds = timeout;
-		this.negamax = negamax;
+		this.searcher = searcher;
+	}
+
+	/** Normalizza il nome dell'algoritmo ({@code negamax} o {@code mcts}, senza badare alle maiuscole). */
+	static String normalizeAlgo(String algo) {
+		final String a = algo == null ? "" : algo.trim().toLowerCase();
+		if (a.equals("negamax") || a.equals("mcts")) {
+			return a;
+		}
+		throw new IllegalArgumentException("algoritmo sconosciuto '" + algo + "' (ammessi: negamax, mcts)");
+	}
+
+	/**
+	 * Costruisce l'algoritmo di ricerca scelto. Per {@code mcts} i parametri sono quelli di {@link MctsConfig#parse(String)} e il tetto ai nodi
+	 * (se non e' dato) si ricava dall'heap; {@code order}, {@code ttLog2} e {@code twoSlot} valgono solo per Negamax.
+	 *
+	 * @throws IllegalArgumentException algoritmo o parametri MCTS non validi
+	 */
+	static MoveSearcher buildSearcher(String algo, String mctsSpec, Evaluator evaluator, int threads, long margin, int order, int ttLog2, boolean twoSlot) {
+		if (normalizeAlgo(algo).equals("mcts")) {
+			final MctsConfig cfg = MctsConfig.parse(mctsSpec);
+			if (cfg.maxNodes == 0) {
+				cfg.maxNodes = Mcts.autoMaxNodes(Runtime.getRuntime().maxMemory());
+			}
+			return new Mcts(evaluator, cfg, threads).setSafetyMarginMillis(margin);
+		}
+		return new NegamaxSearcher(new Negamax(evaluator, 40, true, 1 << ttLog2, true, order, threads, twoSlot).setThreads(threads)
+				.setSafetyMarginMillis(margin));
 	}
 
 	/** Dimensione in byte di una TT di 2^log2 voci (3 long ciascuna). */
@@ -92,8 +134,23 @@ public class TablutNegamaxClient extends TablutClient {
 	}
 
 	/**
+	 * Margine di sicurezza AGGIUNTIVO di default per l'MCTS (solo se l'utente non da' {@code margin=}). La sua memoria viva e' un albero grande, quindi le
+	 * pause del garbage collector sono piu' lunghe e piu' frequenti che per Negamax (misurato su un core con collector seriale: pause fino a 573 ms, e una
+	 * partita persa per timeout con un timeout di 2 s); 500 ms in piu' costano meno dell'1% del tempo per mossa a 60 s. Con timeout piccoli (< 20 s, usati
+	 * solo per prove) non si aggiunge nulla.
+	 */
+	static long mctsExtraMarginMillis(int timeoutSeconds) {
+		return timeoutSeconds >= 20 ? 500 : 0;
+	}
+
+	/**
 	 * Argomenti, nell'ordine richiesto dalla competizione piu' due opzionali:
-	 * {@code <WHITE|BLACK> [timeoutSeconds] [serverIp] [pesiRete.txt] [threads=N] [order=SPEC] [tt=LOG2] [tt2=true|false] [margin=MS]}.
+	 * {@code <WHITE|BLACK> [timeoutSeconds] [serverIp] [pesiRete.txt] [threads=N] [order=SPEC] [tt=LOG2] [tt2=true|false] [margin=MS]
+	 * [algo=negamax|mcts] [mcts=chiave=valore,...]}.
+	 * {@code algo=} sceglie l'algoritmo di ricerca ({@code negamax}, default, oppure {@code mcts}: Monte Carlo Tree Search, si veda {@link Mcts});
+	 * {@code mcts=} ne passa i parametri ({@link MctsConfig}, es. {@code mcts=cpuct=1.5,tau=0.2,expand=1}); con {@code algo=mcts} le opzioni
+	 * {@code order}, {@code tt} e {@code tt2} non hanno effetto, {@code threads} e {@code margin} valgono come per Negamax. Si puo' scegliere
+	 * l'algoritmo anche con la proprieta' di sistema {@code -Dtablut.algo=mcts} (usata da {@link TablutMctsClient}).
 	 * {@code order=} sceglie l'ordinamento delle mosse ({@link OrderingSpec}: {@code base} = quello storico, default; {@code rec} =
 	 * wins+caps+rootsc, consigliato dalle misure sui nodi ma NON ancora confermato in arena a 4 core); {@code tt=} sono i bit della
 	 * dimensione della TT (default 22 = 4,2 M voci = 100 MB; si riduce da sola se non sta nell'heap); {@code tt2=true} usa i bucket a due
@@ -130,7 +187,10 @@ public class TablutNegamaxClient extends TablutClient {
 		int ttLog2 = 26;
 		boolean twoSlot = false;
 		long margin = defaultMarginMillis(timeout);
+		boolean marginGiven = false;
 		String weightsFile = null;
+		String algo = System.getProperty("tablut.algo", "negamax");
+		String mctsSpec = "";
 		for (int i = 3; i < args.length; i++) {
 			final String low = args[i].toLowerCase();
 			try {
@@ -146,6 +206,13 @@ public class TablutNegamaxClient extends TablutClient {
 					twoSlot = Boolean.parseBoolean(args[i].substring("tt2=".length()).trim());
 				} else if (low.startsWith("margin=")) {
 					margin = Math.max(0, Long.parseLong(args[i].substring("margin=".length()).trim()));
+					marginGiven = true;
+				} else if (low.startsWith("algo=")) {
+					algo = normalizeAlgo(args[i].substring("algo=".length())); // lancia se sconosciuto: l'algoritmo resta quello di prima
+				} else if (low.startsWith("mcts=")) {
+					final String spec = args[i].substring("mcts=".length()).trim();
+					MctsConfig.parse(spec); // solo per validarla: lancia se non valida (allora mctsSpec resta quella di prima)
+					mctsSpec = spec;
 				} else if (weightsFile == null) {
 					weightsFile = args[i];
 				}
@@ -153,8 +220,20 @@ public class TablutNegamaxClient extends TablutClient {
 				System.out.println("ATTENZIONE: '" + args[i] + "' non valido (" + e.getMessage() + "), lo ignoro.");
 			}
 		}
+		try {
+			algo = normalizeAlgo(algo); // anche la proprieta' di sistema va validata
+		} catch (IllegalArgumentException e) {
+			System.out.println("ATTENZIONE: " + e.getMessage() + ": uso negamax.");
+			algo = "negamax";
+		}
+		if (algo.equals("mcts") && !marginGiven) {
+			margin += mctsExtraMarginMillis(timeout);
+		}
+		if (!mctsSpec.isEmpty() && !algo.equals("mcts")) {
+			System.out.println("ATTENZIONE: 'mcts=' ignorato perche' l'algoritmo e' " + algo + " (aggiungi algo=mcts).");
+		}
 		final int fitted = fitTtToHeap(ttLog2, Runtime.getRuntime().maxMemory());
-		if (fitted != ttLog2) {
+		if (fitted != ttLog2 && algo.equals("negamax")) {
 			System.out.println("ATTENZIONE: la TT di 2^" + ttLog2 + " voci (" + ttBytes(ttLog2) / (1 << 20) + " MB) non sta nell'heap ("
 					+ Runtime.getRuntime().maxMemory() / (1 << 20) + " MB): uso 2^" + fitted + ". Per una TT piu' grande lancia la JVM con -Xmx piu' alto.");
 			ttLog2 = fitted;
@@ -173,13 +252,20 @@ public class TablutNegamaxClient extends TablutClient {
 			System.out.println("Nessun file di pesi indicato: uso SimpleEvaluator.");
 		}
 
-		System.out.println("Negamax client - ruolo: " + role + " - timeout: " + timeout + "s - server: " + ipAddress
-				+ " - thread di ricerca: " + threads + " - ordinamento: " + orderName + " - TT: 2^" + ttLog2 + " voci ("
-				+ ttBytes(ttLog2) / (1 << 20) + " MB, " + (twoSlot ? "due slot" : "slot singolo") + ") - margine: " + margin + " ms");
+		if (algo.equals("mcts")) {
+			final MctsConfig shown = MctsConfig.parse(mctsSpec);
+			final long cap = shown.maxNodes > 0 ? shown.maxNodes : Mcts.autoMaxNodes(Runtime.getRuntime().maxMemory());
+			System.out.println("MCTS client - ruolo: " + role + " - timeout: " + timeout + "s - server: " + ipAddress + " - thread di ricerca: " + threads
+					+ " - parametri: " + shown + " - tetto nodi: " + cap + " (heap " + Runtime.getRuntime().maxMemory() / (1 << 20)
+					+ " MB; per un albero piu' grande lancia la JVM con -Xmx piu' alto) - margine: " + margin + " ms");
+		} else {
+			System.out.println("Negamax client - ruolo: " + role + " - timeout: " + timeout + "s - server: " + ipAddress
+					+ " - thread di ricerca: " + threads + " - ordinamento: " + orderName + " - TT: 2^" + ttLog2 + " voci ("
+					+ ttBytes(ttLog2) / (1 << 20) + " MB, " + (twoSlot ? "due slot" : "slot singolo") + ") - margine: " + margin + " ms");
+		}
 
-		Negamax negamax = new Negamax(evaluator, 40, true, 1 << ttLog2, true, order, threads, twoSlot).setThreads(threads)
-				.setSafetyMarginMillis(margin);
-		TablutNegamaxClient client = new TablutNegamaxClient(role, "negamax", timeout, ipAddress, negamax);
+		MoveSearcher searcher = buildSearcher(algo, mctsSpec, evaluator, threads, margin, order, ttLog2, twoSlot);
+		TablutNegamaxClient client = new TablutNegamaxClient(role, algo, timeout, ipAddress, searcher);
 		client.run();
 	}
 
@@ -212,13 +298,16 @@ public class TablutNegamaxClient extends TablutClient {
 				long budgetMillis = this.timeoutSeconds * 1000L;
 				long start = System.currentTimeMillis();
 
-				int move = this.negamax.findBestMove(position, budgetMillis, this.historySinceLastCapture);
+				final int histLen = this.historySinceLastCapture.size();
+				final long[] history = new long[histLen];
+				for (int i = 0; i < histLen; i++) {
+					history[i] = this.historySinceLastCapture.get(i);
+				}
+				int move = this.searcher.findBestMove(position, budgetMillis, history, histLen);
 				Action chosen = move == Move.NONE ? null : Move.toAction(move, turn);
 
 				long elapsed = System.currentTimeMillis() - start;
-				System.out.println("Mossa scelta: " + chosen + " | profondita' raggiunta="
-						+ this.negamax.lastDepthReached + " nodi=" + this.negamax.lastNodeCount + " valore="
-						+ String.format("%.1f", this.negamax.lastScore) + " tempo=" + elapsed + "ms");
+				System.out.println("Mossa scelta: " + chosen + " | " + this.searcher.describeLastSearch() + " tempo=" + elapsed + "ms");
 
 				if (chosen == null) {
 					// Non dovrebbe mai succedere: se non ho mosse legali, la partita
