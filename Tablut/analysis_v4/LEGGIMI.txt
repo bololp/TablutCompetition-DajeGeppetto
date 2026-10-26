@@ -1,0 +1,9 @@
+Script usati per decidere le feature v4 e misurare costi/diagnostiche (vedi README_FEATURES_V4.md). NON fanno parte della build:
+sono file singoli nel package di default, da compilare contro build/ (javac -cp build:lib/... -d out *.java). Percorsi e nomi dei file
+dati (ds.gz, raw1.bin, cand.npz, lab.csv) sono quelli del mio sandbox: adattarli. Ordine:
+  GenDs2.java        -> raw*.bin (posizioni + feature)            candfeat.py -> cand.npz (feature candidate in Python, validate vs Java)
+  run_exp.py         -> test "aggiungi feature, errore sull'esito"  (poco sensibile: vedi README)
+  SearchLabels.java  -> lab.csv (valore statico vs ricerca prof.3)  resid.py / resid_cv.py / resid_cv2.py -> dove sbaglia la statica e quanto spiegano le feature
+  FeatAnalysis.java  -> importanza per permutazione e ridondanza lineare
+  HangingDiag.java / PawnValue.java -> la domanda sul Bianco che si "appende"
+  BenchV4*.java      -> costo; V2Sanity.java -> controllo statistico della conversione v2

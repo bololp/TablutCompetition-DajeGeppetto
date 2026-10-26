@@ -99,7 +99,7 @@ public class NeuralEvaluator implements Evaluator {
 		MLP.Loaded l = MLP.load(path);
 		if (l.featureVersion != TablutFeatures.VERSION) {
 			throw new IOException("pesi allenati con feature v" + l.featureVersion + ", il codice usa la v"
-					+ TablutFeatures.VERSION + ": vanno riallenati (" + path + ")");
+					+ TablutFeatures.VERSION + ": convertirli con WeightConverter (esatto) o riallenarli (" + path + ")");
 		}
 		int expected = TablutFeatures.columnsFor(l.featureGroups).length;
 		if (l.net.config().nIn != expected) {

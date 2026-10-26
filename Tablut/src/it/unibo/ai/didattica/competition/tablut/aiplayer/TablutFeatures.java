@@ -60,11 +60,17 @@ public final class TablutFeatures {
 	 *  input con un significato diverso, senza alcun errore visibile).
 	 *  <ul>
 	 *  <li>v2: 43 feature (vie di fuga esatte, invarianza per simmetria).</li>
-	 *  <li>v3: 44 feature. Aggiunta {@link #F_WHITE_RING4} (pedine bianche sul bordo): la distribuzione
+	 *  <li>v3: 44 feature. Aggiunta {@code WHITE_RING4} (pedine bianche sul bordo): la distribuzione
 	 *  ad anelli era asimmetrica, i neri avevano gli anelli 1-4 e i bianchi solo 1-3. Tutti gli indici
 	 *  successivi a {@code F_WHITE_RING3} sono scorsi di uno.</li>
+	 *  <li>v4: 47 feature (44 nel set di default). <b>Rimosse 3 feature linearmente ridondanti</b> (misurato: le 41 colonne
+	 *  del v3 avevano rango 38): {@code KING_AXIS_MAX} (identica a {@code KING_RING}), {@code BLACK_RING4} e
+	 *  {@code WHITE_RING4} (derivabili da {@code N_BLACK}/{@code N_WHITE} meno gli anelli 1-3). <b>Aggiunte 6 feature</b>:
+	 *  {@link #G_ESCAPE} (distanza di fuga graduata del Re), {@link #G_SAFEFORK} (forchette sicure) e {@link #G_GATES}
+	 *  (stato dei 16 "gate" di fuga). Tutti gli indici sono cambiati: la conversione dei pesi v2/v3 e'
+	 *  esatta e si fa con {@link WeightConverter}.</li>
 	 *  </ul> */
-	public static final int VERSION = 3;
+	public static final int VERSION = 4;
 
 	// ---------------------------------------------------------------- indici
 	// BASE: dipendono solo dal contenuto della scacchiera (sempre calcolate)
@@ -72,61 +78,89 @@ public final class TablutFeatures {
 	public static final int F_N_BLACK = 1;
 	public static final int F_KING_RING = 2;
 	public static final int F_KING_AXIS_MIN = 3;
-	public static final int F_KING_AXIS_MAX = 4;
-	public static final int F_KING_ON_THRONE = 5;
-	public static final int F_KING_NEAR_THRONE = 6;
-	public static final int F_KING_SUPPORT = 7;
-	public static final int F_BLACK_NEAR_KING = 8;
-	public static final int F_KING_ADJ_BLACK = 9;
-	public static final int F_KING_ADJ_WHITE = 10;
-	public static final int F_KING_CAPTURE_MISSING = 11;
-	public static final int F_BLACK_CENTRAL = 12;
-	public static final int F_WHITE_CENTRAL = 13;
-	public static final int F_BLACK_RING1 = 14;
-	public static final int F_BLACK_RING2 = 15;
-	public static final int F_BLACK_RING3 = 16;
-	public static final int F_BLACK_RING4 = 17;
-	public static final int F_WHITE_RING1 = 18;
-	public static final int F_WHITE_RING2 = 19;
-	public static final int F_WHITE_RING3 = 20;
-	public static final int F_WHITE_RING4 = 21;
-	public static final int F_WHITE_ISOLATED = 22;
-	public static final int F_BLACK_ISOLATED = 23;
-	public static final int F_BLACK_DIAG_LINKS = 24;
-	public static final int F_BLACK_ORTHO_LINKS = 25;
-	public static final int F_FREE_LINES = 26;
-	public static final int F_BLACK_LINES = 27;
+	public static final int F_KING_ON_THRONE = 4;
+	public static final int F_KING_NEAR_THRONE = 5;
+	public static final int F_KING_SUPPORT = 6;
+	public static final int F_BLACK_NEAR_KING = 7;
+	public static final int F_KING_ADJ_BLACK = 8;
+	public static final int F_KING_ADJ_WHITE = 9;
+	public static final int F_KING_CAPTURE_MISSING = 10;
+	public static final int F_BLACK_CENTRAL = 11;
+	public static final int F_WHITE_CENTRAL = 12;
+	public static final int F_BLACK_RING1 = 13;
+	public static final int F_BLACK_RING2 = 14;
+	public static final int F_BLACK_RING3 = 15;
+	public static final int F_WHITE_RING1 = 16;
+	public static final int F_WHITE_RING2 = 17;
+	public static final int F_WHITE_RING3 = 18;
+	public static final int F_WHITE_ISOLATED = 19;
+	public static final int F_BLACK_ISOLATED = 20;
+	public static final int F_BLACK_DIAG_LINKS = 21;
+	public static final int F_BLACK_ORTHO_LINKS = 22;
+	public static final int F_FREE_LINES = 23;
+	public static final int F_BLACK_LINES = 24;
 	// MOB: mobilita' (richiede la passata sulle mosse)
-	public static final int F_WHITE_MOVES = 28;
-	public static final int F_BLACK_MOVES = 29;
-	public static final int F_KING_MOVES = 30;
-	public static final int F_WHITE_BLOCKED = 31;
-	public static final int F_BLACK_BLOCKED = 32;
-	public static final int F_BLACK_EDGE_REACH = 33;
+	public static final int F_WHITE_MOVES = 25;
+	public static final int F_BLACK_MOVES = 26;
+	public static final int F_KING_MOVES = 27;
+	public static final int F_WHITE_BLOCKED = 28;
+	public static final int F_BLACK_BLOCKED = 29;
+	public static final int F_BLACK_EDGE_REACH = 30;
 	// LANES: vie di fuga del Re
-	public static final int F_KING_LANES = 34;
-	public static final int F_KING_LANES_UNBLOCKABLE = 35;
-	public static final int F_KING_2STEP_CELLS = 36;
-	public static final int F_KING_2STEP_FORKS = 37;
+	public static final int F_KING_LANES = 31;
+	public static final int F_KING_LANES_UNBLOCKABLE = 32;
+	public static final int F_KING_2STEP_CELLS = 33;
+	public static final int F_KING_2STEP_FORKS = 34;
+	// ESCAPE: distanza di fuga graduata (BFS delle mosse del Re su scacchiera statica, fino a 3 mosse)
+	public static final int F_ESC_DIST = 35;
+	public static final int F_ESC_3STEP_CELLS = 36;
+	public static final int F_ESC_EDGE3 = 37;
+	// SAFEFORK: forchette sicure
+	public static final int F_SAFE_FORKS = 38;
+	// GATES: i 16 corridoi di fuga (righe/colonne 1,2,6,7 viste da ciascun estremo)
+	public static final int F_GATES_CLOSED = 39;
+	public static final int F_GATE_RUN = 40;
 	// FLOOD: accerchiamento
-	public static final int F_FLOOD_REGION = 38;
-	public static final int F_FLOOD_EDGE = 39;
-	public static final int F_FLOOD_SIDES = 40;
+	public static final int F_FLOOD_REGION = 41;
+	public static final int F_FLOOD_EDGE = 42;
+	public static final int F_FLOOD_SIDES = 43;
 	// THREATS: catture imminenti
-	public static final int F_WHITE_THREATENED = 41;
-	public static final int F_BLACK_THREATENED = 42;
-	public static final int F_KING_THREAT = 43;
+	public static final int F_WHITE_THREATENED = 44;
+	public static final int F_BLACK_THREATENED = 45;
+	public static final int F_KING_THREAT = 46;
 
-	public static final int NUM_FEATURES = 44;
+	public static final int NUM_FEATURES = 47;
+
+	/**
+	 * Identificatori STABILI delle feature, nell'ordine degli indici. A differenza degli indici (che scorrono quando si
+	 * aggiunge o toglie una feature) gli id non cambiano mai di significato: {@link FeatureRegistry} e
+	 * {@link WeightConverter} li usano per mappare i pesi di una versione sull'altra. {@code FeaturesCheck} verifica che
+	 * {@code IDS[i]} sia il nome della costante {@code F_<id>} con valore i.
+	 */
+	public static final String[] IDS = { "N_WHITE", "N_BLACK", "KING_RING", "KING_AXIS_MIN", "KING_ON_THRONE",
+			"KING_NEAR_THRONE", "KING_SUPPORT", "BLACK_NEAR_KING", "KING_ADJ_BLACK", "KING_ADJ_WHITE",
+			"KING_CAPTURE_MISSING", "BLACK_CENTRAL", "WHITE_CENTRAL", "BLACK_RING1", "BLACK_RING2", "BLACK_RING3",
+			"WHITE_RING1", "WHITE_RING2", "WHITE_RING3", "WHITE_ISOLATED", "BLACK_ISOLATED", "BLACK_DIAG_LINKS",
+			"BLACK_ORTHO_LINKS", "FREE_LINES", "BLACK_LINES", "WHITE_MOVES", "BLACK_MOVES", "KING_MOVES",
+			"WHITE_BLOCKED", "BLACK_BLOCKED", "BLACK_EDGE_REACH", "KING_LANES", "KING_LANES_UNBLOCKABLE",
+			"KING_2STEP_CELLS", "KING_2STEP_FORKS", "ESC_DIST", "ESC_3STEP_CELLS", "ESC_EDGE3", "SAFE_FORKS",
+			"GATES_CLOSED", "GATE_RUN", "FLOOD_REGION", "FLOOD_EDGE", "FLOOD_SIDES", "WHITE_THREATENED",
+			"BLACK_THREATENED", "KING_THREAT" };
 
 	/** Gruppi di feature (maschera di bit): per escluderne alcuni senza pagarne il costo (ablation, varianti "lite"). */
 	public static final int G_MOB = 1;
 	public static final int G_LANES = 2;
 	public static final int G_FLOOD = 4;
 	public static final int G_THREATS = 8;
-	public static final int G_ALL = G_MOB | G_LANES | G_FLOOD | G_THREATS;
+	/** Distanza di fuga graduata del Re (v4). */
+	public static final int G_ESCAPE = 16;
+	/** Forchette sicure (v4). */
+	public static final int G_SAFEFORK = 32;
+	/** Stato dei 16 gate di fuga (v4). */
+	public static final int G_GATES = 64;
+	public static final int G_ALL = G_MOB | G_LANES | G_FLOOD | G_THREATS | G_ESCAPE | G_SAFEFORK | G_GATES;
 	/** Set di default in produzione: tutto tranne FLOOD (misurato: nessun valore predittivo, ~0,4 us di costo). */
-	public static final int G_DEFAULT = G_MOB | G_LANES | G_THREATS;
+	public static final int G_DEFAULT = G_MOB | G_LANES | G_THREATS | G_ESCAPE | G_SAFEFORK | G_GATES;
 	/** Tier "leggero": solo le vie di fuga del Re oltre alle feature BASE (la scansione dei pezzi bianchi viene saltata). */
 	public static final int G_LEAN = G_LANES;
 
@@ -138,6 +172,13 @@ public final class TablutFeatures {
 		}
 		for (int i = F_KING_LANES; i <= F_KING_2STEP_FORKS; i++) {
 			FEATURE_GROUP[i] = G_LANES;
+		}
+		for (int i = F_ESC_DIST; i <= F_ESC_EDGE3; i++) {
+			FEATURE_GROUP[i] = G_ESCAPE;
+		}
+		FEATURE_GROUP[F_SAFE_FORKS] = G_SAFEFORK;
+		for (int i = F_GATES_CLOSED; i <= F_GATE_RUN; i++) {
+			FEATURE_GROUP[i] = G_GATES;
 		}
 		for (int i = F_FLOOD_REGION; i <= F_FLOOD_SIDES; i++) {
 			FEATURE_GROUP[i] = G_FLOOD;
@@ -178,7 +219,6 @@ public final class TablutFeatures {
 		DIV[F_N_BLACK] = 16.0;
 		DIV[F_KING_RING] = 4.0;
 		DIV[F_KING_AXIS_MIN] = 4.0;
-		DIV[F_KING_AXIS_MAX] = 4.0;
 		DIV[F_KING_ON_THRONE] = 1.0;
 		DIV[F_KING_NEAR_THRONE] = 1.0;
 		DIV[F_KING_SUPPORT] = 8.0;
@@ -191,11 +231,9 @@ public final class TablutFeatures {
 		DIV[F_BLACK_RING1] = 8.0;
 		DIV[F_BLACK_RING2] = 8.0;
 		DIV[F_BLACK_RING3] = 8.0;
-		DIV[F_BLACK_RING4] = 16.0;
 		DIV[F_WHITE_RING1] = 8.0;
 		DIV[F_WHITE_RING2] = 8.0;
 		DIV[F_WHITE_RING3] = 8.0;
-		DIV[F_WHITE_RING4] = 8.0;
 		DIV[F_WHITE_ISOLATED] = 8.0;
 		DIV[F_BLACK_ISOLATED] = 16.0;
 		DIV[F_BLACK_DIAG_LINKS] = 16.0;
@@ -212,6 +250,12 @@ public final class TablutFeatures {
 		DIV[F_KING_LANES_UNBLOCKABLE] = 4.0;
 		DIV[F_KING_2STEP_CELLS] = 8.0;
 		DIV[F_KING_2STEP_FORKS] = 8.0;
+		DIV[F_ESC_DIST] = 1.0; // valore grezzo = 1/d (d = mosse minime del Re per fuggire, 1..3; 0 se oltre 3)
+		DIV[F_ESC_3STEP_CELLS] = 20.0;
+		DIV[F_ESC_EDGE3] = 12.0;
+		DIV[F_SAFE_FORKS] = 8.0;
+		DIV[F_GATES_CLOSED] = 16.0;
+		DIV[F_GATE_RUN] = 100.0;
 		DIV[F_FLOOD_REGION] = 64.0;
 		DIV[F_FLOOD_EDGE] = 20.0;
 		DIV[F_FLOOD_SIDES] = 4.0;
@@ -236,7 +280,6 @@ public final class TablutFeatures {
 		n[F_N_BLACK] = "materiale: pedine nere";
 		n[F_KING_RING] = "re: anello (distanza di Chebyshev dal trono)";
 		n[F_KING_AXIS_MIN] = "re: min(|dr|,|dc|) dal trono";
-		n[F_KING_AXIS_MAX] = "re: max(|dr|,|dc|) dal trono";
 		n[F_KING_ON_THRONE] = "re: sul trono";
 		n[F_KING_NEAR_THRONE] = "re: adiacente al trono";
 		n[F_KING_SUPPORT] = "re: pedine bianche entro 2 celle";
@@ -249,11 +292,9 @@ public final class TablutFeatures {
 		n[F_BLACK_RING1] = "struttura: nere nell'anello 1";
 		n[F_BLACK_RING2] = "struttura: nere nell'anello 2";
 		n[F_BLACK_RING3] = "struttura: nere nell'anello 3";
-		n[F_BLACK_RING4] = "struttura: nere sul bordo";
 		n[F_WHITE_RING1] = "struttura: bianche nell'anello 1";
 		n[F_WHITE_RING2] = "struttura: bianche nell'anello 2";
 		n[F_WHITE_RING3] = "struttura: bianche nell'anello 3";
-		n[F_WHITE_RING4] = "struttura: bianche sul bordo";
 		n[F_WHITE_ISOLATED] = "struttura: bianche isolate";
 		n[F_BLACK_ISOLATED] = "struttura: nere isolate";
 		n[F_BLACK_DIAG_LINKS] = "struttura: legami diagonali neri (blocchi)";
@@ -270,6 +311,12 @@ public final class TablutFeatures {
 		n[F_KING_LANES_UNBLOCKABLE] = "fuga: vie immediate NON bloccabili dal Nero";
 		n[F_KING_2STEP_CELLS] = "fuga: celle (1 mossa) da cui il re ha una via";
 		n[F_KING_2STEP_FORKS] = "fuga: celle (1 mossa) da cui il re ha >=2 vie (forchetta)";
+		n[F_ESC_DIST] = "fuga: 1/d, d = mosse minime del re per fuggire (solo d<=3)";
+		n[F_ESC_3STEP_CELLS] = "fuga: celle a 2 mosse del re da cui ha una via (fuga in 3)";
+		n[F_ESC_EDGE3] = "fuga: celle di fuga distinte raggiungibili in <=3 mosse del re";
+		n[F_SAFE_FORKS] = "fuga: forchette sicure (re non catturabile all'arrivo)";
+		n[F_GATES_CLOSED] = "gate: gate di fuga occupati (corsa libera = 0)";
+		n[F_GATE_RUN] = "gate: somma delle corse libere dai 16 gate verso l'interno";
 		n[F_FLOOD_REGION] = "accerchiamento: celle raggiungibili dal re";
 		n[F_FLOOD_EDGE] = "accerchiamento: celle di fuga nella regione del re";
 		n[F_FLOOD_SIDES] = "accerchiamento: lati toccati dalla regione del re";
@@ -361,6 +408,8 @@ public final class TablutFeatures {
 		final int[] kd = new int[32];
 		final int[] seen = new int[PAD];
 		final int[] stack = new int[96];
+		final int[] bfsA = new int[96], bfsB = new int[96];
+		final byte[] reachTmp = new byte[PAD];
 		final int[] rowAll = new int[9], colAll = new int[9], rowBlack = new int[9], colBlack = new int[9];
 		int stamp = 0;
 		int nW, nB, kp, edgeDirs, wBlocked, bBlocked;
@@ -438,6 +487,12 @@ public final class TablutFeatures {
 				fillThreats(ws, out);
 			}
 		}
+		if ((groups & (G_ESCAPE | G_SAFEFORK)) != 0) {
+			fillEscape(ws, out, groups);
+		}
+		if ((groups & G_GATES) != 0) {
+			fillGates(ws, out);
+		}
 		if ((groups & G_FLOOD) != 0) {
 			fillFlood(ws, out);
 		}
@@ -489,11 +544,10 @@ public final class TablutFeatures {
 		out[F_N_BLACK] = ws.nB * INV[F_N_BLACK];
 		out[F_KING_RING] = RING[kp] * INV[F_KING_RING];
 		out[F_KING_AXIS_MIN] = (Math.min(dr, dc)) * INV[F_KING_AXIS_MIN];
-		out[F_KING_AXIS_MAX] = (Math.max(dr, dc)) * INV[F_KING_AXIS_MAX];
 		out[F_KING_ON_THRONE] = kp == THRONE_P ? 1.0 : 0.0;
 		out[F_KING_NEAR_THRONE] = ws.nearThrone ? 1.0 : 0.0;
 
-		int whiteCentral = 0, support = 0, isoW = 0, wr1 = 0, wr2 = 0, wr3 = 0, wr4 = 0;
+		int whiteCentral = 0, support = 0, isoW = 0, wr1 = 0, wr2 = 0, wr3 = 0;
 		Arrays.fill(ws.rowAll, 0);
 		Arrays.fill(ws.colAll, 0);
 		Arrays.fill(ws.rowBlack, 0);
@@ -510,8 +564,6 @@ public final class TablutFeatures {
 				wr2++;
 			} else if (ring == 3) {
 				wr3++;
-			} else if (ring == 4) {
-				wr4++;
 			}
 			if (Math.max(Math.abs(ROW[p] - kr), Math.abs(COL[p] - kc)) <= 2) {
 				support++;
@@ -526,7 +578,6 @@ public final class TablutFeatures {
 		out[F_WHITE_RING1] = (wr1) * INV[F_WHITE_RING1];
 		out[F_WHITE_RING2] = (wr2) * INV[F_WHITE_RING2];
 		out[F_WHITE_RING3] = (wr3) * INV[F_WHITE_RING3];
-		out[F_WHITE_RING4] = (wr4) * INV[F_WHITE_RING4];
 		out[F_WHITE_ISOLATED] = isoW * INV[F_WHITE_ISOLATED];
 		out[F_KING_SUPPORT] = support * INV[F_KING_SUPPORT];
 	}
@@ -534,7 +585,7 @@ public final class TablutFeatures {
 	private static void fillBlackAndLines(Workspace ws, double[] out) {
 		final byte[] b = ws.b;
 		final int kr = ROW[ws.kp], kc = COL[ws.kp];
-		int blackCentral = 0, near = 0, isoB = 0, diag = 0, ortho = 0, br1 = 0, br2 = 0, br3 = 0, br4 = 0;
+		int blackCentral = 0, near = 0, isoB = 0, diag = 0, ortho = 0, br1 = 0, br2 = 0, br3 = 0;
 		for (int i = 0; i < ws.nB; i++) {
 			int p = ws.bl[i];
 			blackCentral += 8 - MAN[p];
@@ -545,8 +596,6 @@ public final class TablutFeatures {
 				br2++;
 			} else if (ring == 3) {
 				br3++;
-			} else if (ring == 4) {
-				br4++;
 			}
 			if (Math.max(Math.abs(ROW[p] - kr), Math.abs(COL[p] - kc)) <= 2) {
 				near++;
@@ -576,7 +625,6 @@ public final class TablutFeatures {
 		out[F_BLACK_RING1] = (br1) * INV[F_BLACK_RING1];
 		out[F_BLACK_RING2] = (br2) * INV[F_BLACK_RING2];
 		out[F_BLACK_RING3] = (br3) * INV[F_BLACK_RING3];
-		out[F_BLACK_RING4] = (br4) * INV[F_BLACK_RING4];
 		out[F_BLACK_ISOLATED] = isoB * INV[F_BLACK_ISOLATED];
 		out[F_BLACK_DIAG_LINKS] = diag * INV[F_BLACK_DIAG_LINKS];
 		out[F_BLACK_ORTHO_LINKS] = ortho * INV[F_BLACK_ORTHO_LINKS];
@@ -767,6 +815,156 @@ public final class TablutFeatures {
 		out[F_WHITE_THREATENED] = whiteThr * INV[F_WHITE_THREATENED];
 		out[F_BLACK_THREATENED] = blackThr * INV[F_BLACK_THREATENED];
 		out[F_KING_THREAT] = kingCapturable(b, ws.reachB, ws.kp) ? 1.0 : 0.0;
+	}
+
+	/**
+	 * ESCAPE e SAFEFORK. BFS delle mosse del Re su scacchiera STATICA (il Nero non muove, il Re non cattura spostandosi:
+	 * stessa approssimazione dichiarata di {@code F_KING_2STEP_*}), con la cella di partenza liberata. Gli strati sono
+	 * le celle raggiungibili in esattamente 1, 2, 3 mosse (ogni cella nel primo strato in cui compare). Un raggio si ferma
+	 * alla prima cella non vuota (pedine, trono, citadel) o al bordo: arrivarci e' la fuga.
+	 * <ul>
+	 * <li>{@code ESC_DIST} = 1/d dove d e' lo strato in cui compare la prima cella di fuga (1..3), 0 se oltre 3 mosse.</li>
+	 * <li>{@code ESC_3STEP_CELLS} = celle dello strato 2 da cui il Re ha almeno una via immediata (fuga in 3 mosse).</li>
+	 * <li>{@code ESC_EDGE3} = celle di fuga DISTINTE raggiunte entro 3 mosse.</li>
+	 * <li>{@code SAFE_FORKS} = celle dello strato 1 con almeno 2 vie immediate in cui, arrivato il Re, nessuna mossa
+	 * del Nero lo cattura. Con il Bianco a muovere due vie di fuga e un Re non catturabile sono una vittoria forzata
+	 * in 3 semi-mosse (il Nero puo' bloccare una sola via); {@code FeaturesCheck} lo verifica col motore.</li>
+	 * </ul>
+	 */
+	private static void fillEscape(Workspace ws, double[] out, int groups) {
+		final byte[] b = ws.b;
+		final int kp = ws.kp;
+		final boolean wantEsc = (groups & G_ESCAPE) != 0, wantSafe = (groups & G_SAFEFORK) != 0;
+		final int maxDepth = wantEsc ? 3 : 1;
+		final int[] seen = ws.seen;
+		final int stamp = ++ws.stamp;
+		int[] cur = ws.bfsA, nxt = ws.bfsB;
+		int nCur = 1;
+		cur[0] = kp;
+		seen[kp] = stamp;
+		final byte saved = b[kp];
+		b[kp] = kp == THRONE_P ? THRONE : EMPTY;
+		int dist = 0, edgeCells = 0, threeStep = 0, safeForks = 0;
+		for (int depth = 1; depth <= maxDepth; depth++) {
+			int nNxt = 0, edgesHere = 0;
+			for (int i = 0; i < nCur; i++) {
+				final int c = cur[i];
+				for (int k = 0; k < 4; k++) {
+					final int d = DIR[k];
+					int q = c;
+					while (true) {
+						q += d;
+						if (b[q] != EMPTY) {
+							break;
+						}
+						if (seen[q] != stamp) {
+							seen[q] = stamp;
+							if (EDGE[q]) {
+								edgesHere++;
+							} else {
+								nxt[nNxt++] = q;
+							}
+						}
+						if (EDGE[q]) {
+							break;
+						}
+					}
+				}
+			}
+			edgeCells += edgesHere;
+			if (dist == 0 && edgesHere > 0) {
+				dist = depth;
+			}
+			if (depth == 1 && wantSafe) {
+				safeForks = countSafeForks(ws, nxt, nNxt);
+			}
+			if (depth == 2) {
+				for (int i = 0; i < nNxt; i++) {
+					if (lanesFrom(b, nxt[i]) >= 1) {
+						threeStep++;
+					}
+				}
+			}
+			int[] t = cur;
+			cur = nxt;
+			nxt = t;
+			nCur = nNxt;
+		}
+		b[kp] = saved;
+		if (wantEsc) {
+			out[F_ESC_DIST] = dist == 0 ? 0.0 : (1.0 / dist) * INV[F_ESC_DIST];
+			out[F_ESC_3STEP_CELLS] = threeStep * INV[F_ESC_3STEP_CELLS];
+			out[F_ESC_EDGE3] = edgeCells * INV[F_ESC_EDGE3];
+		}
+		if (wantSafe) {
+			out[F_SAFE_FORKS] = safeForks * INV[F_SAFE_FORKS];
+		}
+	}
+
+	/**
+	 * Forchette sicure fra le celle {@code cells[0..n)} (strato 1 della BFS, con la cella di partenza del Re GIA' liberata
+	 * in {@code ws.b}): per ogni cella con >= 2 vie immediate si mette il Re li', si ricostruisce la raggiungibilita' del
+	 * Nero su quella scacchiera (il Re blocca e la sua vecchia cella e' libera) e si controlla che non sia catturabile.
+	 */
+	private static int countSafeForks(Workspace ws, int[] cells, int n) {
+		final byte[] b = ws.b, rt = ws.reachTmp;
+		int safe = 0;
+		for (int i = 0; i < n; i++) {
+			final int c = cells[i];
+			if (lanesFrom(b, c) < 2) {
+				continue;
+			}
+			b[c] = KING;
+			Arrays.fill(rt, (byte) 0);
+			for (int j = 0; j < ws.nB; j++) {
+				scan(b, rt, ws.bl[j]);
+			}
+			if (!kingCapturable(b, rt, c)) {
+				safe++;
+			}
+			b[c] = EMPTY;
+		}
+		return safe;
+	}
+
+	/** Cella di bordo e passo verso l'interno dei 16 gate: righe/colonne 1,2,6,7 viste da entrambi gli estremi. */
+	private static final int[] GATE_CELL = new int[16], GATE_STEP = new int[16];
+	static {
+		int n = 0;
+		for (int l : new int[] { 1, 2, 6, 7 }) {
+			GATE_CELL[n] = idx(l, 0);
+			GATE_STEP[n++] = 1;
+			GATE_CELL[n] = idx(l, 8);
+			GATE_STEP[n++] = -1;
+			GATE_CELL[n] = idx(0, l);
+			GATE_STEP[n++] = W;
+			GATE_CELL[n] = idx(8, l);
+			GATE_STEP[n++] = -W;
+		}
+	}
+
+	/**
+	 * GATES: per ciascuno dei 16 gate (la cella di fuga all'estremo di una riga/colonna 1, 2, 6, 7) la "corsa libera" e'
+	 * il numero di celle vuote consecutive dal gate verso l'interno (si ferma alla prima pedina, al Re, al trono o a una
+	 * citadel). {@code GATES_CLOSED} = gate con corsa 0 (cella di fuga occupata); {@code GATE_RUN} = somma delle corse.
+	 */
+	private static void fillGates(Workspace ws, double[] out) {
+		final byte[] b = ws.b;
+		int closed = 0, runSum = 0;
+		for (int g = 0; g < 16; g++) {
+			final int st = GATE_STEP[g];
+			int q = GATE_CELL[g], run = 0;
+			while (b[q] == EMPTY) {
+				run++;
+				q += st;
+			}
+			if (run == 0) {
+				closed++;
+			}
+			runSum += run;
+		}
+		out[F_GATES_CLOSED] = closed * INV[F_GATES_CLOSED];
+		out[F_GATE_RUN] = runSum * INV[F_GATE_RUN];
 	}
 
 	/** Flood fill dal Re sulle celle in cui puo' camminare: misura quanto e' "accerchiato". */

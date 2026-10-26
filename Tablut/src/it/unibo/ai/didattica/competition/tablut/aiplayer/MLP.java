@@ -242,6 +242,27 @@ public final class MLP {
 		return n;
 	}
 
+	/**
+	 * Tabella degli strati per {@link WeightConverter}: una riga {@code {offsetPesi, offsetBias, nIn, nOut, leggeIngresso}} per
+	 * strato (pesi [out][in] row-major). {@code leggeIngresso} = 1 per gli strati che leggono direttamente il vettore di
+	 * ingresso (il primo del tronco, oppure il primo di ciascuna head se non c'e' tronco).
+	 */
+	int[][] layerTable() {
+		boolean[] first = new boolean[lIn.length];
+		for (int[] p : path) {
+			first[p[0]] = true;
+		}
+		int[][] t = new int[lIn.length][5];
+		for (int l = 0; l < lIn.length; l++) {
+			t[l][0] = lW[l];
+			t[l][1] = lB[l];
+			t[l][2] = lIn[l];
+			t[l][3] = lOut[l];
+			t[l][4] = first[l] ? 1 : 0;
+		}
+		return t;
+	}
+
 	/** Copia profonda indipendente (per i worker del trainer: pesi congelati). */
 	public MLP copy() {
 		return new MLP(cfg, params.clone());

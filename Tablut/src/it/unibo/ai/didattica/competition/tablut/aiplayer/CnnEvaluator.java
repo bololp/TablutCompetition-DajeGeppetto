@@ -94,7 +94,7 @@ public class CnnEvaluator implements Evaluator {
 		if (nFeat > 0) {
 			if (l.featureVersion != TablutFeatures.VERSION) {
 				throw new IOException("pesi allenati con feature v" + l.featureVersion + ", il codice usa la v" + TablutFeatures.VERSION
-						+ ": vanno riallenati (" + path + ")");
+						+ ": convertirli con WeightConverter (esatto) o riallenarli (" + path + ")");
 			}
 			int expected = TablutFeatures.columnsFor(l.featureGroups).length;
 			if (expected != nFeat) {

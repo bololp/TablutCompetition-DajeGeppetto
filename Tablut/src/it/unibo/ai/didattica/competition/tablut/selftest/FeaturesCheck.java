@@ -45,6 +45,7 @@ public class FeaturesCheck {
 
 		checkEnumCodes();
 		checkTables();
+		checkIds();
 		List<State> positions = collectPositions(numPositions, seed);
 		System.out.println("Posizioni raccolte: " + positions.size());
 
@@ -72,6 +73,7 @@ public class FeaturesCheck {
 		checkGroupsAreIndependent(positions);
 		checkCoverage(cover, positions.size());
 		checkNamesAndRanges(positions);
+		System.out.println("Forchette sicure incontrate: " + safeForkPositions + " (ognuna verificata come vittoria forzata in 3 semi-mosse contro TUTTE le risposte nere)");
 
 		if (failures == 0) {
 			System.out.println("=== FEATURES CHECK OK: " + positions.size() + " posizioni, tutte le feature coerenti con gli oracoli ===");
@@ -318,6 +320,10 @@ public class FeaturesCheck {
 		expect("F_KING_2STEP_CELLS", f[F_KING_2STEP_CELLS], cells, F_KING_2STEP_CELLS, s);
 		expect("F_KING_2STEP_FORKS", f[F_KING_2STEP_FORKS], forks, F_KING_2STEP_FORKS, s);
 
+		// --- v4: distanza di fuga graduata, forchette sicure, gate (oracoli via motore) ---
+		checkEscapeOracles(s, kr, kc, f);
+		checkGatesOracle(s, f);
+
 		// --- minacce di cattura: le catture vere, applicando ogni mossa col motore ---
 		Set<Integer> whiteVictims = new HashSet<>(), blackVictims = new HashSet<>();
 		boolean kingCapturable = false;
@@ -387,7 +393,6 @@ public class FeaturesCheck {
 		int dr = Math.abs(kr - 4), dc = Math.abs(kc - 4);
 		expect("F_KING_RING", f[F_KING_RING], Math.max(dr, dc), F_KING_RING, s);
 		expect("F_KING_AXIS_MIN", f[F_KING_AXIS_MIN], Math.min(dr, dc), F_KING_AXIS_MIN, s);
-		expect("F_KING_AXIS_MAX", f[F_KING_AXIS_MAX], Math.max(dr, dc), F_KING_AXIS_MAX, s);
 		expect("F_KING_ON_THRONE", f[F_KING_ON_THRONE], (kr == 4 && kc == 4) ? 1 : 0, F_KING_ON_THRONE, s);
 		expect("F_KING_NEAR_THRONE", f[F_KING_NEAR_THRONE], (dr + dc == 1) ? 1 : 0, F_KING_NEAR_THRONE, s);
 
@@ -448,18 +453,17 @@ public class FeaturesCheck {
 		expect("F_BLACK_RING1", f[F_BLACK_RING1], bring[1], F_BLACK_RING1, s);
 		expect("F_BLACK_RING2", f[F_BLACK_RING2], bring[2], F_BLACK_RING2, s);
 		expect("F_BLACK_RING3", f[F_BLACK_RING3], bring[3], F_BLACK_RING3, s);
-		expect("F_BLACK_RING4", f[F_BLACK_RING4], bring[4], F_BLACK_RING4, s);
 		expect("F_WHITE_RING1", f[F_WHITE_RING1], wring[1], F_WHITE_RING1, s);
 		expect("F_WHITE_RING2", f[F_WHITE_RING2], wring[2], F_WHITE_RING2, s);
 		expect("F_WHITE_RING3", f[F_WHITE_RING3], wring[3], F_WHITE_RING3, s);
-		expect("F_WHITE_RING4", f[F_WHITE_RING4], wring[4], F_WHITE_RING4, s);
 		// Gli anelli devono PARTIZIONARE le pedine di ciascun colore (nessuna pedina persa o contata due volte).
 		// Il trono (anello 0) e' l'unica cella dell'anello 0 e solo il Re puo' starci, quindi anelli 1-4 == tutte le pedine.
 		// Verificato sui valori ESTRATTI (non sull'oracolo): cattura asimmetrie del tipo "i neri hanno l'anello 4, i bianchi no".
+		// v4: gli anelli 4 non sono piu' feature (erano linearmente dipendenti): qui l'anello 4 viene dall'oracolo.
 		double whiteInRings = f[F_WHITE_RING1] * DIV[F_WHITE_RING1] + f[F_WHITE_RING2] * DIV[F_WHITE_RING2]
-				+ f[F_WHITE_RING3] * DIV[F_WHITE_RING3] + f[F_WHITE_RING4] * DIV[F_WHITE_RING4];
+				+ f[F_WHITE_RING3] * DIV[F_WHITE_RING3] + wring[4];
 		double blackInRings = f[F_BLACK_RING1] * DIV[F_BLACK_RING1] + f[F_BLACK_RING2] * DIV[F_BLACK_RING2]
-				+ f[F_BLACK_RING3] * DIV[F_BLACK_RING3] + f[F_BLACK_RING4] * DIV[F_BLACK_RING4];
+				+ f[F_BLACK_RING3] * DIV[F_BLACK_RING3] + bring[4];
 		if (Math.abs(whiteInRings - nW) > 1e-9) {
 			fail("anelli bianchi 1-4 non partizionano le pedine bianche: somma=" + whiteInRings + " pedine=" + nW + "\n" + s);
 		}
@@ -506,6 +510,187 @@ public class FeaturesCheck {
 		expect("F_KING_ADJ_WHITE", f[F_KING_ADJ_WHITE], adjW, F_KING_ADJ_WHITE, s);
 
 		return failures - before;
+	}
+
+
+	// ------------------------------------------------------------ oracoli v4 (motore)
+
+	/** Destinazioni delle mosse del Re (dal motore) quando il Re sta in (kr,kc). */
+	static List<int[]> kingDestinations(State board, int kr, int kc) {
+		List<int[]> out = new ArrayList<>();
+		for (Action m : AshtonRules.generateMoves(withTurn(board, Turn.WHITE))) {
+			if (m.getRowFrom() == kr && m.getColumnFrom() == kc) {
+				out.add(new int[] { m.getRowTo(), m.getColumnTo() });
+			}
+		}
+		return out;
+	}
+
+	/** Sposta il Re da (fr,fc) a (tr,tc) SENZA catture (approssimazione dichiarata delle feature statiche). */
+	static State moveKing(State s, int fr, int fc, int tr, int tc) {
+		State c = withTurn(s, Turn.WHITE);
+		Pawn[][] b = c.getBoard();
+		b[fr][fc] = (fr == 4 && fc == 4) ? Pawn.THRONE : Pawn.EMPTY;
+		b[tr][tc] = Pawn.KING;
+		return c;
+	}
+
+	static int lanesAt(State s, int kr, int kc, int r, int c) {
+		State st = moveKing(s, kr, kc, r, c);
+		int n = 0;
+		for (int[] d : kingDestinations(st, r, c)) {
+			if (isEdge(d[0], d[1])) {
+				n++;
+			}
+		}
+		return n;
+	}
+
+	static long safeForkPositions = 0, forcedWinVerified = 0;
+
+	/**
+	 * BFS delle mosse del Re con le mosse GENERATE DAL MOTORE: distanza minima di fuga (<= 3), celle dello strato 2 con una
+	 * via, celle di fuga distinte entro 3 mosse; poi le forchette sicure (strato 1, >= 2 vie, Re non catturabile da alcuna
+	 * mossa nera applicata dal motore). In piu' verifica la PROMESSA semantica delle forchette sicure: dopo QUALUNQUE
+	 * risposta nera il Re ha ancora una via di fuga immediata (vittoria forzata in 3 semi-mosse).
+	 */
+	static void checkEscapeOracles(State s, int kr, int kc, double[] f) {
+		java.util.Set<Integer> seen = new java.util.HashSet<>();
+		seen.add(kr * N + kc);
+		List<int[]> cur = new ArrayList<>(), layer1 = new ArrayList<>();
+		cur.add(new int[] { kr, kc });
+		int dist = 0, edgeCells = 0, threeStep = 0;
+		for (int depth = 1; depth <= 3; depth++) {
+			List<int[]> nxt = new ArrayList<>();
+			int edgesHere = 0;
+			for (int[] c : cur) {
+				State st = moveKing(s, kr, kc, c[0], c[1]);
+				for (int[] d : kingDestinations(st, c[0], c[1])) {
+					if (seen.add(d[0] * N + d[1])) {
+						if (isEdge(d[0], d[1])) {
+							edgesHere++;
+						} else {
+							nxt.add(d);
+						}
+					}
+				}
+			}
+			edgeCells += edgesHere;
+			if (dist == 0 && edgesHere > 0) {
+				dist = depth;
+			}
+			if (depth == 1) {
+				layer1 = nxt;
+			}
+			if (depth == 2) {
+				for (int[] c : nxt) {
+					if (lanesAt(s, kr, kc, c[0], c[1]) >= 1) {
+						threeStep++;
+					}
+				}
+			}
+			cur = nxt;
+		}
+		expect("F_ESC_DIST", f[F_ESC_DIST], dist == 0 ? 0.0 : 1.0 / dist, F_ESC_DIST, s);
+		expect("F_ESC_3STEP_CELLS", f[F_ESC_3STEP_CELLS], threeStep, F_ESC_3STEP_CELLS, s);
+		expect("F_ESC_EDGE3", f[F_ESC_EDGE3], edgeCells, F_ESC_EDGE3, s);
+
+		int safe = 0;
+		for (int[] c : layer1) {
+			if (lanesAt(s, kr, kc, c[0], c[1]) < 2) {
+				continue;
+			}
+			State st = moveKing(s, kr, kc, c[0], c[1]);
+			State sb = withTurn(st, Turn.BLACK);
+			boolean capturable = false;
+			List<State> replies = new ArrayList<>();
+			for (Action m : AshtonRules.generateMoves(sb)) {
+				State after = AshtonRules.applyMove(sb, m);
+				if (after.getTurn() == Turn.BLACKWIN) {
+					capturable = true;
+					break;
+				}
+				replies.add(after);
+			}
+			if (capturable) {
+				continue;
+			}
+			safe++;
+			safeForkPositions++;
+			for (State after : replies) {
+				boolean hasLane = false;
+				for (int[] d : kingDestinations(after, c[0], c[1])) {
+					if (isEdge(d[0], d[1])) {
+						hasLane = true;
+						break;
+					}
+				}
+				if (!hasLane) {
+					fail("forchetta 'sicura' in (" + c[0] + "," + c[1] + ") ma il Nero ha una risposta che lascia il Re senza vie\n" + s);
+					break;
+				}
+			}
+			forcedWinVerified++;
+		}
+		expect("F_SAFE_FORKS", f[F_SAFE_FORKS], safe, F_SAFE_FORKS, s);
+	}
+
+	/** Gate: corsa libera dai 16 estremi delle righe/colonne 1,2,6,7, ricalcolata direttamente su Pawn[][]. */
+	static void checkGatesOracle(State s, double[] f) {
+		Pawn[][] b = s.getBoard();
+		boolean[][] cit = citadels();
+		int closed = 0, sum = 0;
+		for (int L : new int[] { 1, 2, 6, 7 }) {
+			int[][] starts = { { L, 0, 0, 1 }, { L, 8, 0, -1 }, { 0, L, 1, 0 }, { 8, L, -1, 0 } };
+			for (int[] st : starts) {
+				int r = st[0], c = st[1], run = 0;
+				while (r >= 0 && r < N && c >= 0 && c < N && b[r][c] == Pawn.EMPTY && !cit[r][c]) {
+					run++;
+					r += st[2];
+					c += st[3];
+				}
+				if (run == 0) {
+					closed++;
+				}
+				sum += run;
+			}
+		}
+		expect("F_GATES_CLOSED", f[F_GATES_CLOSED], closed, F_GATES_CLOSED, s);
+		expect("F_GATE_RUN", f[F_GATE_RUN], sum, F_GATE_RUN, s);
+	}
+
+	/** Gli id stabili: IDS[i] deve essere il nome della costante F_<id> il cui valore e' i (e viceversa nessuna costante senza id). */
+	static void checkIds() {
+		if (IDS.length != NUM_FEATURES) {
+			fail("IDS.length " + IDS.length + " != NUM_FEATURES " + NUM_FEATURES);
+			return;
+		}
+		Set<String> uniq = new HashSet<>();
+		for (int i = 0; i < IDS.length; i++) {
+			if (!uniq.add(IDS[i])) {
+				fail("id duplicato: " + IDS[i]);
+			}
+			try {
+				int v = TablutFeatures.class.getField("F_" + IDS[i]).getInt(null);
+				if (v != i) {
+					fail("IDS[" + i + "]=" + IDS[i] + " ma F_" + IDS[i] + " = " + v);
+				}
+			} catch (ReflectiveOperationException e) {
+				fail("manca la costante F_" + IDS[i]);
+			}
+		}
+		int consts = 0;
+		for (java.lang.reflect.Field fl : TablutFeatures.class.getFields()) {
+			if (fl.getName().startsWith("F_") && fl.getType() == int.class
+					&& java.lang.reflect.Modifier.isStatic(fl.getModifiers())) {
+				consts++;
+			}
+		}
+		if (consts != NUM_FEATURES) {
+			fail("costanti F_* = " + consts + " != NUM_FEATURES " + NUM_FEATURES);
+		} else {
+			System.out.println("OK   - IDS coerenti con le " + consts + " costanti F_* (id stabili usati dal convertitore di pesi)");
+		}
 	}
 
 	static boolean[][] citCache;
@@ -643,7 +828,7 @@ public class FeaturesCheck {
 		Workspace ws = newWorkspace();
 		double[] full = new double[NUM_FEATURES], part = new double[NUM_FEATURES];
 		int bad = 0;
-		for (int mask = 0; mask < 16; mask++) {
+		for (int mask = 0; mask <= G_ALL; mask++) {
 			int[] cols = TablutFeatures.columnsFor(mask);
 			boolean[] active = new boolean[NUM_FEATURES];
 			for (int c : cols) {
@@ -655,7 +840,7 @@ public class FeaturesCheck {
 					bad++;
 				}
 			}
-			for (State s : positions.subList(0, Math.min(500, positions.size()))) {
+			for (State s : positions.subList(0, Math.min(250, positions.size()))) {
 				extract(s, ws, full, G_ALL);
 				extract(s, ws, part, mask);
 				for (int i = 0; i < NUM_FEATURES; i++) {
@@ -669,7 +854,7 @@ public class FeaturesCheck {
 		if (bad > 0) {
 			fail("i gruppi di feature non sono indipendenti o columnsFor e' incoerente (" + bad + " valori)");
 		} else {
-			System.out.println("OK   - tutte le 16 maschere di gruppi: colonne attive identiche al vettore completo, le altre a 0");
+			System.out.println("OK   - tutte le " + (G_ALL + 1) + " maschere di gruppi: colonne attive identiche al vettore completo, le altre a 0");
 		}
 	}
 
