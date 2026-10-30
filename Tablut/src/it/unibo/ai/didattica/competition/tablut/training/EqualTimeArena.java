@@ -162,6 +162,16 @@ public class EqualTimeArena {
 		// 7o argomento opzionale: profondita' FISSA (stessa per entrambi, tempo praticamente illimitato). Misura la qualita' pura
 		// dell'evaluator a parita' di profondita', senza il costo per nodo: utile per capire se un evaluator piu' lento "merita" il tempo.
 		final int fixedDepth = a.length > 6 ? Math.max(1, Integer.parseInt(a[6])) : 0;
+		run(specA, specB, pairs, ms, seed, threads, fixedDepth);
+	}
+
+	/**
+	 * Il corpo di {@link #main} come metodo richiamabile (usato da {@link DistillAcceptance}): stessa partita, stesso output.
+	 *
+	 * @param fixedDepth 0 = tempo uguale ({@code ms} per mossa); &gt; 0 = profondita' fissa uguale per i due lati
+	 * @return {vittorie di A, patte, sconfitte di A}
+	 */
+	public static int[] run(String specA, String specB, int pairs, long ms, long seed, final int threads, final int fixedDepth) throws IOException {
 		final int maxDepth = fixedDepth > 0 ? fixedDepth : 30;
 		if (fixedDepth > 0) {
 			ms = 600000;
@@ -233,5 +243,6 @@ public class EqualTimeArena {
 				specA, specB, ms, n, aw, ad, al, 100 * score, 100 * (centre - half), 100 * (centre + half));
 		System.out.printf("   A: profondita' media %.2f, nodi/s %.0f | B: profondita' media %.2f, nodi/s %.0f%n",
 				sa.depthSum / sa.moves, sa.nodeSum / sa.timeSum, sb.depthSum / sb.moves, sb.nodeSum / sb.timeSum);
+		return new int[] { aw, ad, al };
 	}
 }

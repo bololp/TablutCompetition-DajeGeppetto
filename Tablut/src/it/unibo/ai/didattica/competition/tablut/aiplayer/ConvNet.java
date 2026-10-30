@@ -354,6 +354,8 @@ public final class ConvNet {
 		final float[][][] hd; // uscite delle head: hd[ruolo][j]
 		int role;
 		float out;
+		/** Logit pre-tanh dell'ultimo forward: {@code out == (float) Math.tanh(logit)} esattamente. */
+		float logit;
 		boolean valid; // true dopo un forward
 		// gradienti (allocati alla prima backward)
 		float[][] da;
@@ -439,6 +441,15 @@ public final class ConvNet {
 		/** Uscita dell'ultimo forward (in (-1,1)). */
 		public float output() {
 			return out;
+		}
+
+		/**
+		 * Logit {@code z} dell'ultimo forward, cioe' l'ingresso della tanh finale ({@code output() == tanh(z)}). Serve alla loss nel
+		 * dominio dei logit: ricavarlo con {@code atanh(output())} perderebbe tutta la precisione quando la tanh e' satura (in float
+		 * {@code tanh(z)} vale 1 gia' per z ~ 9).
+		 */
+		public float logit() {
+			return logit;
 		}
 
 		void ensureBackward() {
@@ -595,7 +606,14 @@ public final class ConvNet {
 		final int H = cfg.head.length + 1;
 		for (int j = 0; j < H; j++) {
 			final int hout = j < H - 1 ? cfg.head[j] : 1;
-			dense(p, headW[role][j], headB[role][j], x, in, ws.hd[role][j], hout, j == H - 1);
+			if (j == H - 1) {
+				// ultimo strato (1 uscita): stesso calcolo di dense(...) ma conservando il logit z prima della tanh
+				final float z = outPre(p, headW[role][j], headB[role][j], x, in);
+				ws.logit = z;
+				ws.hd[role][j][0] = (float) Math.tanh(z);
+			} else {
+				dense(p, headW[role][j], headB[role][j], x, in, ws.hd[role][j], hout, false);
+			}
 			x = ws.hd[role][j];
 			in = hout;
 		}
@@ -613,6 +631,19 @@ public final class ConvNet {
 	 * salvate in {@code ws}). Il gradiente non tocca la head dell'altro ruolo.
 	 */
 	public void backward(Workspace ws, double outGrad, float[] grad) {
+		backwardImpl(ws, outGrad, false, grad);
+	}
+
+	/**
+	 * Come {@link #backward} ma {@code logitGrad} e' il gradiente rispetto al LOGIT {@code z} (ingresso della tanh finale), non
+	 * rispetto all'uscita: lo strato finale non moltiplica per {@code 1 - y^2}. Per una loss {@code L(z)} nel dominio dei logit
+	 * (es. {@code (z - t)^2}) si passa {@code dL/dz}; resta esatto anche quando la tanh e' satura (dove {@code 1 - y^2} = 0).
+	 */
+	public void backwardLogit(Workspace ws, double logitGrad, float[] grad) {
+		backwardImpl(ws, logitGrad, true, grad);
+	}
+
+	private void backwardImpl(Workspace ws, double outGrad, boolean logitMode, float[] grad) {
 		if (!ws.valid) {
 			throw new IllegalStateException("backward senza forward");
 		}
@@ -632,7 +663,11 @@ public final class ConvNet {
 			final float[] dx = j == 0 ? dHeadIn : ws.dhd[role][j - 1];
 			final int hin = j == 0 ? (m > 0 ? cfg.dense[m - 1] : cfg.denseIn()) : cfg.head[j - 1];
 			final int hout = j < H - 1 ? cfg.head[j] : 1;
-			denseBack(p, headW[role][j], headB[role][j], x, hin, ws.hd[role][j], ws.dhd[role][j], hout, j == H - 1, grad, dx);
+			if (logitMode && j == H - 1) {
+				denseBackPre(p, headW[role][j], headB[role][j], x, hin, ws.dhd[role][j][0], grad, dx);
+			} else {
+				denseBack(p, headW[role][j], headB[role][j], x, hin, ws.hd[role][j], ws.dhd[role][j], hout, j == H - 1, grad, dx);
+			}
 		}
 
 		// ---- densi condivisi ----
@@ -902,6 +937,33 @@ public final class ConvNet {
 				s0 += p[wb + i] * x[i];
 			}
 			y[o] = act(p[bOff + o] + (s0 + s1), tanh);
+		}
+	}
+
+	/**
+	 * Pre-attivazione (logit) di uno strato a UNA uscita. Replica ESATTAMENTE l'ordine delle somme del ramo scalare di
+	 * {@link #dense}, cosi' {@code (float) Math.tanh(outPre(...))} e' bit-identico a cio' che {@code dense(..., tanh=true)} produceva.
+	 */
+	private static float outPre(float[] p, int wOff, int bOff, float[] x, int in) {
+		float s0 = 0, s1 = 0;
+		int i = 0;
+		for (; i + 1 < in; i += 2) {
+			s0 += p[wOff + i] * x[i];
+			s1 += p[wOff + i + 1] * x[i + 1];
+		}
+		if (i < in) {
+			s0 += p[wOff + i] * x[i];
+		}
+		return p[bOff] + (s0 + s1);
+	}
+
+	/** Backward di uno strato a UNA uscita dato il gradiente {@code dz} rispetto alla sua PRE-attivazione; SOVRASCRIVE {@code dx}. */
+	private static void denseBackPre(float[] p, int wOff, int bOff, float[] x, int in, float dz, float[] grad, float[] dx) {
+		Arrays.fill(dx, 0, in, 0f);
+		grad[bOff] += dz;
+		for (int i = 0; i < in; i++) {
+			grad[wOff + i] += dz * x[i];
+			dx[i] += p[wOff + i] * dz;
 		}
 	}
 

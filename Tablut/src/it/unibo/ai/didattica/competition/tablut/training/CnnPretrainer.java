@@ -62,7 +62,8 @@ import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
  * <p>
  * Argomenti {@code chiave=valore}: games(7000), epochs(10), conv(4), reduce(2), dense(32), head(8), features(1 = ibrido, 0 = CNN puro),
  * groups(G_DEFAULT), lr(0.002), batch(128), augment(1), seed(1), threads(tutti i core), out(cnn_pretrained.txt),
- * dataOut(nessuno), data(nessuno: se presente carica il dataset invece di generarlo).
+ * dataOut(nessuno), data(nessuno: se presente carica il dataset invece di generarlo), init(nessuno: se presente parte dai pesi di quel file
+ * invece che da pesi casuali; la forma della rete e i gruppi di feature vengono dal file).
  */
 public class CnnPretrainer {
 
@@ -496,10 +497,17 @@ public class CnnPretrainer {
 		int threads = Integer.parseInt(p.getOrDefault("threads", String.valueOf(Runtime.getRuntime().availableProcessors())));
 		String out = p.getOrDefault("out", "cnn_pretrained.txt");
 
+		// init=<pesi>: riparte da pesi esistenti (forma, gruppi di feature e modalita' ibrida/pura vengono dal file; conv/reduce/dense/head/
+		// features/groups sono ignorati). E' il punto di partenza dei fine-tuning (si veda CnnDistiller): con questo lr va abbassato (es. 2e-4).
+		CnnEvaluator initEv = p.containsKey("init") ? CnnEvaluator.fromFile(p.get("init")) : null;
+		if (initEv != null) {
+			hybrid = initEv.isHybrid();
+			groups = initEv.featureGroups;
+		}
 		int[] cols = hybrid ? TablutFeatures.columnsFor(groups) : new int[0];
-		ConvNet.Config cfg = new ConvNet.Config(conv, reduce, cols.length, dense, head);
-		ConvNet net = new ConvNet(cfg, seed);
-		System.out.println("=== CnnPretrainer === " + cfg + " | " + net.numParams() + " parametri, ~" + net.macsPerEval() + " MAC/valutazione | gruppi="
+		ConvNet.Config cfg = initEv != null ? initEv.net.config() : new ConvNet.Config(conv, reduce, cols.length, dense, head);
+		ConvNet net = initEv != null ? initEv.net.copy() : new ConvNet(cfg, seed);
+		System.out.println("=== CnnPretrainer === " + (initEv != null ? "init=" + p.get("init") + " | " : "") + cfg + " | " + net.numParams() + " parametri, ~" + net.macsPerEval() + " MAC/valutazione | gruppi="
 				+ (hybrid ? groups : "nessuno (CNN puro)") + " epochs=" + epochs + " lr=" + lr + " batch=" + batch + " augment=" + augment
 				+ " threads=" + threads);
 
