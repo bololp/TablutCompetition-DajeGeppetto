@@ -1,0 +1,75 @@
+MODIFICHE: cache delle valutazioni MLP/CNN + order=rec come default del client
+==============================================================================
+
+FILE (5; nessun commit, nessun altro file toccato)
+  aggiunti
+    Tablut/src/.../aiplayer/CachingEvaluator.java        cache delle valutazioni (decoratore di Evaluator)
+    Tablut/src/.../aiplayer/CachingEvaluatorCheck.java   test della cache
+    Tablut/src/.../client/ClientDefaultsCheck.java       test end-to-end del main reale (sottoprocesso, legge il banner)
+  modificati
+    Tablut/src/.../client/TablutNegamaxClient.java       default order=rec, opzione evcache=, wiring (withEvalCache)
+    Tablut/src/.../client/NegamaxClientArgsCheck.java    controlli su default, ordinamenti espliciti, wiring e memoria
+
+APPLICARE (dalla radice del repo):   patch -p1 < cache-and-order-rec.patch      (oppure copiare i file dell'archivio)
+
+COMPORTAMENTO
+  * order: il default di TablutNegamaxClient.main passa da "base" a "rec" (DEFAULT_ORDER_NAME). order=base, none, wins, caps,
+    capsfirst, counter, kcarry, rootsc, all, allfirst, wins+counter... continuano a funzionare. Il banner mostra anche il valore
+    numerico passato alla ricerca ("ordinamento: rec (modo N)"). NON cambiano: i costruttori di Negamax, i costruttori pubblici di
+    TablutNegamaxClient (arene e test che passano un ordinamento esplicito) e ORDER_DEFAULT.
+  * cache: nuova opzione evcache=LOG2 (default 22; 0 = disattivata). Attiva solo con algo=negamax e con MLP/CNN; MAI con
+    SimpleEvaluator (misurato +36% di tempo) ne' con MCTS (ha la sua EvalCache).
+  * Il banner ora riporta "cache valutazioni: 2^22 voci (128 MB)" oppure "disattivata", dedotto dall'oggetto effettivamente passato.
+
+CACHE: IDENTITA' E CONCORRENZA
+  * Chiave ESATTA: 81 celle x 2 bit (EMPTY/WHITE/BLACK/KING; le sole 4 valori ammessi in FastState.board) + turno = 163 bit, confrontati
+    per intero a ogni lookup. Lo Zobrist non e' usato (ne' per l'identita' ne' per l'indice). Le reti leggono solo board e turn
+    (verificato nel codice). Cella fuori dominio / turno non 0-1 / board non di 81 celle = cache saltata, valutazione diretta.
+  * Valore: 64 bit grezzi del double (nessun arrotondamento, +0.0/-0.0/Inf conservati).
+  * Voce = 4 long [k0,k1,valore,coda]; la coda ha chiave parziale, bit "occupato" e un contatore di versione (seqlock per slot):
+    lettura = coda, dati, rilettura della coda; scrittura = CAS a versione dispari, dati, versione pari. Sovrascritture e scritture
+    concorrenti saltate riducono solo gli hit. Ipotesi residua: un lettore sospeso a meta' lookup mentre altre 2^27 scritture
+    colpiscono lo STESSO slot (contatore a 28 bit).
+  * Nessuna allocazione nel lookup/scrittura (misurato: 0,0002 B/chiamata).
+  * Ciclo di vita: pesi e outputScale sono fissi dopo la costruzione; il client crea il decoratore subito dopo il caricamento dei pesi
+    e passa alla ricerca solo lui. Difesa: se outputScale cambia, la cache viene saltata finche' non torna al valore originale.
+    Se si modificano i pesi (trainer) serve clear() a ricerca ferma: la cache non e' pensata per i trainer.
+
+MEMORIA (configurazione predefinita)
+  32 byte per voce x 2^22 voci = 128 MiB (un solo AtomicLongArray). Tetto: al piu' 1/8 dell'heap (fitToHeap, minimo 2^12); in un heap
+  da 512 MiB scende a 2^21 (64 MiB) con un avviso. Si SOMMA alla TT (che ha il suo tetto di 1/2 heap): caso peggiore 5/8 dell'heap.
+  Dimensione vs hit rate (MLP d=5, una partita): 2^16 26,8% | 2^18 29,6% | 2^20 30,9% | 2^22 31,3% | 2^24 31,4%.
+
+COMPILAZIONE E TEST ESEGUITI (JDK 21 in sandbox a 1 core; bytecode -source 8 -target 8, major version 52)
+  cd Tablut
+  java -m jdk.compiler/com.sun.tools.javac.Main -source 8 -target 8 -Xlint:-options -nowarn -encoding iso-8859-1 \
+       -d OUT -cp "lib/gson-2.2.2.jar:lib/commons-cli-1.4.jar" $(find src -name "*.java")
+  java -Xss4m -Xmx2g -cp "OUT:lib/gson-2.2.2.jar:lib/commons-cli-1.4.jar" it.unibo.ai.didattica.competition.tablut.<classe>
+  Nuovi/aggiornati:  aiplayer.CachingEvaluatorCheck, client.NegamaxClientArgsCheck, client.ClientDefaultsCheck   -> tutti OK
+  Esistenti:         aiplayer.PVSCheck, OrderingExtCheck, LazySmpCheck, NoAllocationCheck (anche -Dnoalloc.order=rec),
+                     SearchOptimizationsCheck, TwoSlotTTCheck, RepetitionAndStalemateCheck; selftest.TTCorrectnessCheck,
+                     CnnEvaluatorCheck, FeatureConversionCheck, FastStateCheck (19.744.399 verifiche)               -> tutti OK
+                     aiplayer.SearchEquivalenceCheck -> 4615/4616 OK; 1 FALLIMENTO PREESISTENTE: "copertura: troppe poche ricerche
+                     effettivamente interrotte (53/80)" (asserzione legata alla velocita' della macchina). Identico, 3 volte su 3,
+                     sulla build ORIGINALE non modificata. Nessun confronto di equivalenza fallisce.
+  NON ESEGUITI: build con Ant (ant non installato; ho usato javac direttamente), esecuzione su una JVM 8 vera (solo JDK 21 con
+  bytecode 8: le API usate sono AtomicLongArray, LongAdder, Arrays.fill, ProcessBuilder.waitFor(timeout), tutte Java 8),
+  test a 4 core reali, partite contro server/avversario reale, arena a tempo uguale per order=rec (il README stesso dice che non e'
+  ancora confermato in arena a 4 core).
+
+MUTAZIONI (per verificare che i test abbiano denti)
+  CachingEvaluator, 11 mutanti: 10 uccisi (versione dispari ignorata, chiave non confrontata, turno/KING non codificati, guardia
+  outputScale tolta, scrittura con versione dispari, bypass fuori dominio tolto, indice che ignora k1, valore salvato come float).
+  SOPRAVVISSUTO: la tolta della rilettura finale della versione nel lettore (protegge da letture strappate che richiedono
+  interleaving fra thread di pochi ns: non provocabile in modo affidabile su 1 CPU). Da rieseguire su 4 core.
+  Client, 7 mutanti: 6 rilevati (default riportato a base, cache non avvolta, cache di default off, cache con Simple/MCTS, order=
+  esplicito ignorato o ignorato nella ricerca). NON RILEVATO: sostituire solo l'argomento 'order' della chiamata a buildSearcher
+  nel main (richiederebbe un getter dell'ordinamento in Negamax: campo privato, non modificato).
+  Durante la scrittura dei test e' emerso e corretto un difetto: la prima funzione d'indice disperdeva male chiavi quasi uguali
+  (245 chiavi in 222 slot di 2^20); ora fmix64 (245 in 245). Non incideva sulla correttezza, solo sugli hit.
+
+MISURE (stessa sessione, 1 core, minimo/mediana di ripetizioni OFF/ON alternate; a parita' di nodi e decisioni)
+  MLP d=4  -7/-8% tempo (hit 23,4%)   MLP d=5 -12/-13% (hit 31,3%)   CNN d=3 -23% (hit 25,2%)   SimpleEvaluator +36% (escluso)
+  Costo del percorso di cache: hit 86 ns (voce in cache CPU) - 242 ns (accesso casuale in 128 MiB); miss+scrittura ~300 ns.
+  Convenienza solo se la valutazione costa piu' di ~1-1,5 us: vale per MLP e CNN, non per Simple. Con MLP veloce il guadagno
+  e' modesto; cresce con la profondita'. Da riverificare sulla macchina di gara (4 thread, budget reali).

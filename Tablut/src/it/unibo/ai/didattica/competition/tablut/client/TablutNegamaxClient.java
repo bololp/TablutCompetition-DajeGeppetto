@@ -5,6 +5,7 @@ import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.List;
 
+import it.unibo.ai.didattica.competition.tablut.aiplayer.CachingEvaluator;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Evaluator;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.EvaluatorLoader;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Mcts;
@@ -35,6 +36,12 @@ import it.unibo.ai.didattica.competition.tablut.engine.Move;
  * </pre>
  */
 public class TablutNegamaxClient extends TablutClient {
+
+	/** Ordinamento delle mosse di Negamax usato da {@link #main} se non c'e' {@code order=} (nomi di {@link OrderingSpec}). */
+	static final String DEFAULT_ORDER_NAME = "rec";
+
+	/** Bit della dimensione della cache delle valutazioni (MLP/CNN) di {@link #main} se non c'e' {@code evcache=}: 2^22 voci = 128 MiB. */
+	static final int DEFAULT_EVAL_CACHE_LOG2 = 22;
 
 	/** Timeout (in secondi) dichiarato dal server/arbitro per ogni mossa. */
 	private final int timeoutSeconds;
@@ -111,6 +118,23 @@ public class TablutNegamaxClient extends TablutClient {
 				.setSafetyMarginMillis(margin));
 	}
 
+	/**
+	 * Avvolge {@code evaluator} in una {@link CachingEvaluator} di 2^log2 voci (ridotta se supera un ottavo dell'heap) SOLO se l'algoritmo e'
+	 * Negamax (l'MCTS ha la sua {@code EvalCache}), {@code log2 > 0} e l'evaluator e' una rete (MLP/CNN: con {@link SimpleEvaluator} la cache non
+	 * conviene); altrimenti restituisce lo stesso {@code evaluator}.
+	 */
+	static Evaluator withEvalCache(String algo, Evaluator evaluator, int log2, long maxMemoryBytes) {
+		if (!algo.equals("negamax") || log2 <= 0 || !CachingEvaluator.isCacheable(evaluator)) {
+			return evaluator;
+		}
+		final int fitted = CachingEvaluator.fitToHeap(log2, maxMemoryBytes);
+		if (fitted != log2) {
+			System.out.println("ATTENZIONE: la cache delle valutazioni di 2^" + log2 + " voci (" + CachingEvaluator.bytesFor(log2) / (1 << 20)
+					+ " MB) supera un ottavo dell'heap (" + maxMemoryBytes / (1 << 20) + " MB): uso 2^" + fitted + ".");
+		}
+		return new CachingEvaluator(evaluator, fitted);
+	}
+
 	/** Dimensione in byte di una TT di 2^log2 voci (3 long ciascuna). */
 	static long ttBytes(int log2) {
 		return (1L << log2) * 3 * 8;
@@ -151,8 +175,11 @@ public class TablutNegamaxClient extends TablutClient {
 	 * {@code mcts=} ne passa i parametri ({@link MctsConfig}, es. {@code mcts=cpuct=1.5,tau=0.2,expand=1}); con {@code algo=mcts} le opzioni
 	 * {@code order}, {@code tt} e {@code tt2} non hanno effetto, {@code threads} e {@code margin} valgono come per Negamax. Si puo' scegliere
 	 * l'algoritmo anche con la proprieta' di sistema {@code -Dtablut.algo=mcts} (usata da {@link TablutMctsClient}).
-	 * {@code order=} sceglie l'ordinamento delle mosse ({@link OrderingSpec}: {@code base} = quello storico, default; {@code rec} =
-	 * wins+caps+rootsc, consigliato dalle misure sui nodi ma NON ancora confermato in arena a 4 core); {@code tt=} sono i bit della
+	 * {@code order=} sceglie l'ordinamento delle mosse ({@link OrderingSpec}: {@code rec} = wins+caps+rootsc, default;
+	 * {@code base} = quello storico, killer+history; le misure sui nodi lo danno in vantaggio ma NON e' ancora confermato in arena a 4 core);
+	 * {@code evcache=LOG2} sono i bit della dimensione della cache delle valutazioni di MLP/CNN ({@link CachingEvaluator}: default 22 =
+	 * 4,2 M voci = 128 MiB, al piu' un ottavo dell'heap; {@code evcache=0} la disattiva; mai usata con SimpleEvaluator ne' con MCTS,
+	 * che ha la sua); {@code tt=} sono i bit della
 	 * dimensione della TT (default 22 = 4,2 M voci = 100 MB; si riduce da sola se non sta nell'heap); {@code tt2=true} usa i bucket a due
 	 * slot; {@code margin=} e' il margine di sicurezza in ms tolto al timeout (default 1500 con timeout >= 20 s, altrimenti 300).
 	 * Gli argomenti facoltativi (la competizione li permette, si veda
@@ -182,8 +209,9 @@ public class TablutNegamaxClient extends TablutClient {
 		}
 
 		int threads = Negamax.defaultThreads();
-		int order = Negamax.ORDER_DEFAULT;
-		String orderName = "base";
+		int order = OrderingSpec.parse(DEFAULT_ORDER_NAME);
+		String orderName = DEFAULT_ORDER_NAME;
+		int evCacheLog2 = DEFAULT_EVAL_CACHE_LOG2;
 		int ttLog2 = 26;
 		boolean twoSlot = false;
 		long margin = defaultMarginMillis(timeout);
@@ -200,6 +228,8 @@ public class TablutNegamaxClient extends TablutClient {
 					final String name = args[i].substring("order=".length()).trim();
 					order = OrderingSpec.parse(name); // lancia se il nome e' sconosciuto: allora order e orderName restano quelli di prima
 					orderName = name;
+				} else if (low.startsWith("evcache=")) {
+					evCacheLog2 = Math.max(0, Math.min(26, Integer.parseInt(args[i].substring("evcache=".length()).trim())));
 				} else if (low.startsWith("tt=")) {
 					ttLog2 = Math.max(12, Math.min(28, Integer.parseInt(args[i].substring("tt=".length()).trim())));
 				} else if (low.startsWith("tt2=")) {
@@ -252,6 +282,13 @@ public class TablutNegamaxClient extends TablutClient {
 			System.out.println("Nessun file di pesi indicato: uso SimpleEvaluator.");
 		}
 
+		// cache delle valutazioni: solo Negamax con una rete (si veda withEvalCache). Il decoratore e' creato QUI, subito dopo il
+		// caricamento, e solo lui e' passato alla ricerca: i pesi non cambiano piu'. Il banner descrive l'oggetto effettivo.
+		evaluator = withEvalCache(algo, evaluator, evCacheLog2, Runtime.getRuntime().maxMemory());
+		final String evCacheDesc = evaluator instanceof CachingEvaluator
+				? "2^" + ((CachingEvaluator) evaluator).log2Entries() + " voci (" + CachingEvaluator.bytesFor(((CachingEvaluator) evaluator).log2Entries()) / (1 << 20) + " MB)"
+				: "disattivata";
+
 		if (algo.equals("mcts")) {
 			final MctsConfig shown = MctsConfig.parse(mctsSpec);
 			final long cap = shown.maxNodes > 0 ? shown.maxNodes : Mcts.autoMaxNodes(Runtime.getRuntime().maxMemory());
@@ -260,8 +297,9 @@ public class TablutNegamaxClient extends TablutClient {
 					+ " MB; per un albero piu' grande lancia la JVM con -Xmx piu' alto) - margine: " + margin + " ms");
 		} else {
 			System.out.println("Negamax client - ruolo: " + role + " - timeout: " + timeout + "s - server: " + ipAddress
-					+ " - thread di ricerca: " + threads + " - ordinamento: " + orderName + " - TT: 2^" + ttLog2 + " voci ("
-					+ ttBytes(ttLog2) / (1 << 20) + " MB, " + (twoSlot ? "due slot" : "slot singolo") + ") - margine: " + margin + " ms");
+					+ " - thread di ricerca: " + threads + " - ordinamento: " + orderName + " (modo " + order + ") - TT: 2^" + ttLog2 + " voci ("
+					+ ttBytes(ttLog2) / (1 << 20) + " MB, " + (twoSlot ? "due slot" : "slot singolo") + ") - cache valutazioni: " + evCacheDesc
+					+ " - margine: " + margin + " ms");
 		}
 
 		MoveSearcher searcher = buildSearcher(algo, mctsSpec, evaluator, threads, margin, order, ttLog2, twoSlot);

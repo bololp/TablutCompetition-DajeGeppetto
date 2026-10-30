@@ -1,17 +1,23 @@
 package it.unibo.ai.didattica.competition.tablut.client;
 
+import it.unibo.ai.didattica.competition.tablut.aiplayer.CachingEvaluator;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Mcts;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.MoveSearcher;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Negamax;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.NegamaxSearcher;
+import it.unibo.ai.didattica.competition.tablut.aiplayer.OrderingSpec;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.SimpleEvaluator;
 import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 import it.unibo.ai.didattica.competition.tablut.engine.Move;
 
+import java.lang.reflect.Field;
+
 /**
  * Verifica le funzioni di configurazione del client: margine di default, dimensione della TT, adattamento all'heap, e la scelta dell'algoritmo
- * di ricerca ({@code algo=negamax|mcts}).
+ * di ricerca ({@code algo=negamax|mcts}), l'ordinamento delle mosse di default ({@code rec}) e la possibilita' di sceglierne un altro, la
+ * dimensione di default e il tetto di memoria della cache delle valutazioni. Il comportamento del {@code main} reale e' verificato da
+ * {@link ClientDefaultsCheck}.
  */
 public class NegamaxClientArgsCheck {
 	static int failures = 0;
@@ -23,7 +29,14 @@ public class NegamaxClientArgsCheck {
 		}
 	}
 
-	public static void main(String[] args) {
+	/** Il valore di {@code orderingMode} con cui e' stato costruito il Negamax del searcher (campo privato: reflection). */
+	static int orderingModeOf(MoveSearcher searcher) throws Exception {
+		final Field f = Negamax.class.getDeclaredField("orderingMode");
+		f.setAccessible(true);
+		return f.getInt(((NegamaxSearcher) searcher).negamax());
+	}
+
+	public static void main(String[] args) throws Exception {
 		check(TablutNegamaxClient.defaultMarginMillis(60) == 1500, "60 s -> 1500 ms");
 		check(TablutNegamaxClient.defaultMarginMillis(20) == 1500, "20 s -> 1500 ms");
 		check(TablutNegamaxClient.defaultMarginMillis(19) == 300 && TablutNegamaxClient.defaultMarginMillis(2) == 300, "timeout brevi -> margine storico 300 ms");
@@ -83,6 +96,36 @@ public class NegamaxClientArgsCheck {
 			}
 			check(threw, "parametri MCTS non validi rifiutati: '" + bad + "'");
 		}
+		// ---- ordinamento di default (rec) e scelta esplicita di un altro
+		check(TablutNegamaxClient.DEFAULT_ORDER_NAME.equals("rec"), "l'ordinamento di default del client e' rec");
+		final int defOrder = OrderingSpec.parse(TablutNegamaxClient.DEFAULT_ORDER_NAME);
+		check(defOrder == (Negamax.ORDER_DEFAULT | Negamax.ORDER_RECOMMENDED), "il default equivale a ORDER_DEFAULT | ORDER_RECOMMENDED");
+		check(defOrder != Negamax.ORDER_DEFAULT, "il default NON e' piu' l'ordinamento storico");
+		check(OrderingSpec.parse("base") == Negamax.ORDER_DEFAULT, "order=base seleziona ancora l'ordinamento storico");
+		check(OrderingSpec.parse("rec") == defOrder, "order=rec e' il default");
+		check(orderingModeOf(TablutNegamaxClient.buildSearcher("negamax", "", ev, 1, 0, defOrder, 12, false)) == defOrder, "il Negamax costruito con il default riceve rec");
+		check(orderingModeOf(TablutNegamaxClient.buildSearcher("negamax", "", ev, 1, 0, OrderingSpec.parse("base"), 12, false)) == Negamax.ORDER_DEFAULT,
+			"il Negamax costruito con order=base riceve l'ordinamento storico");
+		final int custom = OrderingSpec.parse("wins+counter");
+		check(custom != defOrder && custom != Negamax.ORDER_DEFAULT
+			&& orderingModeOf(TablutNegamaxClient.buildSearcher("negamax", "", ev, 1, 0, custom, 12, false)) == custom, "un ordinamento esplicito diverso (wins+counter) viene rispettato");
+		for (String name : new String[] { "none", "wins", "caps", "capsfirst", "counter", "kcarry", "rootsc", "all", "allfirst" }) {
+			check(orderingModeOf(TablutNegamaxClient.buildSearcher("negamax", "", ev, 1, 0, OrderingSpec.parse(name), 12, false)) == OrderingSpec.parse(name), "order=" + name + " continua a funzionare");
+		}
+		// ---- cache delle valutazioni: dimensione di default e tetto di memoria
+		check(TablutNegamaxClient.DEFAULT_EVAL_CACHE_LOG2 == 22, "cache delle valutazioni di default: 2^22 voci");
+		check(CachingEvaluator.bytesFor(TablutNegamaxClient.DEFAULT_EVAL_CACHE_LOG2) == 128L << 20, "la cache di default occupa 128 MiB");
+		check(CachingEvaluator.fitToHeap(TablutNegamaxClient.DEFAULT_EVAL_CACHE_LOG2, GiB) == 22, "la cache di default sta in un heap di 1 GiB");
+		check(CachingEvaluator.fitToHeap(TablutNegamaxClient.DEFAULT_EVAL_CACHE_LOG2, GiB / 2) == 21, "in 512 MiB la cache scende a 2^21 (64 MiB = un ottavo)");
+		// ---- wiring della cache: withEvalCache (usata da main) avvolge solo le reti, solo con Negamax, e rispetta il tetto di memoria
+		final it.unibo.ai.didattica.competition.tablut.aiplayer.NeuralEvaluator mlp = it.unibo.ai.didattica.competition.tablut.aiplayer.NeuralEvaluator.randomInit(1);
+		final it.unibo.ai.didattica.competition.tablut.aiplayer.Evaluator wrapped = TablutNegamaxClient.withEvalCache("negamax", mlp, 22, 2 * GiB);
+		check(wrapped instanceof CachingEvaluator && ((CachingEvaluator) wrapped).inner() == mlp && ((CachingEvaluator) wrapped).log2Entries() == 22, "MLP + negamax: avvolta in una cache di 2^22 voci");
+		check(TablutNegamaxClient.withEvalCache("negamax", mlp, 22, GiB / 2) instanceof CachingEvaluator
+			&& ((CachingEvaluator) TablutNegamaxClient.withEvalCache("negamax", mlp, 22, GiB / 2)).log2Entries() == 21, "heap di 512 MiB: cache ridotta a 2^21");
+		check(TablutNegamaxClient.withEvalCache("negamax", ev, 22, 2 * GiB) == ev, "SimpleEvaluator: mai avvolto");
+		check(TablutNegamaxClient.withEvalCache("mcts", mlp, 22, 2 * GiB) == mlp, "algo=mcts: mai avvolto (ha la sua EvalCache)");
+		check(TablutNegamaxClient.withEvalCache("negamax", mlp, 0, 2 * GiB) == mlp, "evcache=0: nessuna cache");
 		if (failures == 0) {
 			System.out.println("=== NEGAMAX CLIENT ARGS CHECK OK ===");
 		} else {
