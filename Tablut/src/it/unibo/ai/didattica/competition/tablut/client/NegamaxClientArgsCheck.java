@@ -1,6 +1,7 @@
 package it.unibo.ai.didattica.competition.tablut.client;
 
 import it.unibo.ai.didattica.competition.tablut.aiplayer.CachingEvaluator;
+import it.unibo.ai.didattica.competition.tablut.aiplayer.ExactTranspositionTable;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Mcts;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.MoveSearcher;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Negamax;
@@ -126,6 +127,23 @@ public class NegamaxClientArgsCheck {
 		check(TablutNegamaxClient.withEvalCache("negamax", ev, 22, 2 * GiB) == ev, "SimpleEvaluator: mai avvolto");
 		check(TablutNegamaxClient.withEvalCache("mcts", mlp, 22, 2 * GiB) == mlp, "algo=mcts: mai avvolto (ha la sua EvalCache)");
 		check(TablutNegamaxClient.withEvalCache("negamax", mlp, 0, 2 * GiB) == mlp, "evcache=0: nessuna cache");
+		// ---- chiave esatta (exactkey=): spenta di default; accesa, la TT di Negamax e' davvero la TT esatta e la cache legge la chiave dallo stato
+		check(!TablutNegamaxClient.DEFAULT_EXACT_KEY, "exactkey e' spento di default");
+		check(!(((NegamaxSearcher) TablutNegamaxClient.buildSearcher("negamax", "", ev, 1, 0, defOrder, 12, false)).negamax().transpositionTable() instanceof ExactTranspositionTable),
+			"senza exactkey la TT e' quella a hash");
+		check(!(((NegamaxSearcher) TablutNegamaxClient.buildSearcher("negamax", "", ev, 1, 0, defOrder, 12, false, false)).negamax().transpositionTable() instanceof ExactTranspositionTable),
+			"exactKeys=false: TT a hash");
+		check(((NegamaxSearcher) TablutNegamaxClient.buildSearcher("negamax", "", ev, 1, 0, defOrder, 12, false, true)).negamax().transpositionTable() instanceof ExactTranspositionTable,
+			"exactKeys=true: la TT di Negamax e' una ExactTranspositionTable");
+		check(((NegamaxSearcher) TablutNegamaxClient.buildSearcher("negamax", "", ev, 1, 0, defOrder, 12, true, true)).negamax().transpositionTable().isTwoSlot(), "exactKeys=true con due slot: TT a due slot");
+		check(TablutNegamaxClient.ttBytes(26) == 24L << 26 && TablutNegamaxClient.ttBytes(26, false) == 24L << 26, "TT a hash: 24 byte per voce");
+		check(TablutNegamaxClient.ttBytes(26, true) == 40L << 26, "TT esatta: 40 byte per voce");
+		check(TablutNegamaxClient.fitTtToHeap(26, 2 * GiB) == 25 && TablutNegamaxClient.fitTtToHeap(26, 2 * GiB, false) == 25, "TT a hash: in 2 GiB di heap scende a 2^25");
+		check(TablutNegamaxClient.fitTtToHeap(26, 2 * GiB, true) == 24, "TT esatta: in 2 GiB di heap scende a 2^24 (40 byte per voce)");
+		check(((CachingEvaluator) TablutNegamaxClient.withEvalCache("negamax", mlp, 22, 2 * GiB, true)).isStateKey(), "exactkey: la cache legge la chiave dallo stato");
+		check(!((CachingEvaluator) TablutNegamaxClient.withEvalCache("negamax", mlp, 22, 2 * GiB, false)).isStateKey()
+			&& !((CachingEvaluator) TablutNegamaxClient.withEvalCache("negamax", mlp, 22, 2 * GiB)).isStateKey(), "senza exactkey la cache ricodifica la scacchiera");
+		check(TablutNegamaxClient.withEvalCache("negamax", ev, 22, 2 * GiB, true) == ev, "exactkey: SimpleEvaluator comunque mai avvolto");
 		if (failures == 0) {
 			System.out.println("=== NEGAMAX CLIENT ARGS CHECK OK ===");
 		} else {

@@ -14,6 +14,7 @@ public final class UndoInfo {
 	byte oldTurn;
 	byte oldKingSquare;
 	long oldZobristHash;
+	long oldKey0, oldKey1, oldKey2;
 	int capturedCount;
 	final byte[] capturedSquares = new byte[MAX_CAPTURES];
 	final byte[] capturedPieces = new byte[MAX_CAPTURES];

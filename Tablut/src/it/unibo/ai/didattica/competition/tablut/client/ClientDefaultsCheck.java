@@ -123,6 +123,23 @@ public class ClientDefaultsCheck {
 			check(o != null && banner(o).contains("cache valutazioni: disattivata"), "con SimpleEvaluator la cache resta disattivata anche con evcache=22. Banner: " + (o == null ? "-" : banner(o)));
 			o = run(HEAP2G, "WHITE", "60", "127.0.0.1", M, "algo=mcts");
 			check(o != null && banner(o).startsWith("MCTS client") && !o.contains("cache valutazioni"), "con algo=mcts il client e' MCTS e non avvolge la cache. Banner: " + (o == null ? "-" : banner(o)));
+			// 5b) chiave esatta: spenta di default; accesa, TT e cache lo dichiarano nel banner (dedotto dagli oggetti costruiti)
+			o = run(HEAP2G, "WHITE", "60", "127.0.0.1", M);
+			check(o != null && banner(o).contains("slot singolo, hash)") && !banner(o).contains("chiave esatta"), "senza exactkey: TT a hash e cache che ricodifica. Banner: " + (o == null ? "-" : banner(o)));
+			o = run(HEAP2G, "WHITE", "60", "127.0.0.1", M, "exactkey=false");
+			check(o != null && banner(o).contains("slot singolo, hash)") && !banner(o).contains("chiave esatta"), "exactkey=false esplicito. Banner: " + (o == null ? "-" : banner(o)));
+			for (String w : new String[] { M, C }) {
+				o = run(HEAP2G, "WHITE", "60", "127.0.0.1", w, "exactkey=true");
+				String b = o == null ? "-" : banner(o);
+				check(o != null && b.contains("TT: 2^24 voci (640 MB, slot singolo, chiave esatta)") && b.contains("cache valutazioni: 2^22 voci (128 MB, chiave esatta dallo stato)") && b.contains(orderLabel("rec")),
+					"exactkey=true (" + (w.equals(M) ? "MLP" : "CNN") + "): TT esatta (2^24 voci = 640 MB in 2 GiB di heap) e cache dallo stato. Banner: " + b);
+			}
+			o = run(HEAP2G, "WHITE", "60", "127.0.0.1", M, "exactkey=true", "tt2=true");
+			check(o != null && banner(o).contains("due slot, chiave esatta"), "exactkey=true con tt2=true. Banner: " + (o == null ? "-" : banner(o)));
+			o = run(HEAP2G, "WHITE", "60", "127.0.0.1", "exactkey=true");
+			check(o != null && banner(o).contains("chiave esatta)") && banner(o).contains("cache valutazioni: disattivata"), "exactkey=true con SimpleEvaluator: TT esatta, cache sempre disattivata. Banner: " + (o == null ? "-" : banner(o)));
+			o = run(HEAP2G, "WHITE", "60", "127.0.0.1", M, "algo=mcts", "exactkey=true");
+			check(o != null && o.contains("'exactkey=' ignorato") && banner(o).startsWith("MCTS client"), "algo=mcts: exactkey ignorato con avviso. Output: " + (o == null ? "-" : banner(o)));
 			// 6) heap piccolo: la cache scende (al piu' un ottavo dell'heap)
 			o = run(java.util.Arrays.asList("-Xmx256m"), "WHITE", "60", "127.0.0.1", M);
 			check(o != null && o.contains("supera un ottavo dell'heap") && !banner(o).contains("cache valutazioni: 2^22"), "heap di 256 MB: la cache di 128 MB viene ridotta. Output: " + (o == null ? "-" : banner(o)));

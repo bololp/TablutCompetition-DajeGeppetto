@@ -3,6 +3,7 @@ package it.unibo.ai.didattica.competition.tablut.aiplayer;
 import java.util.concurrent.atomic.AtomicLongArray;
 
 import it.unibo.ai.didattica.competition.tablut.domain.Action;
+import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 
 /**
  * Transposition table per Negamax con potatura alpha-beta, <b>condivisibile tra thread senza lock</b>
@@ -190,6 +191,19 @@ public class TranspositionTable {
 			return; // slot vuoto, posizione diversa o voce "strappata" da scritture concorrenti: miss
 		}
 		fillProbe(r, meta, scoreBits, neededDepth);
+	}
+
+	/**
+	 * Come {@link #probeInto(long, int, ProbeResult)} ma identifica la posizione dallo STATO. Qui usa lo Zobrist ({@code s.zobristHash}), cioe'
+	 * si comporta esattamente come prima; {@link ExactTranspositionTable} lo ridefinisce con la chiave esatta di {@link FastState}.
+	 */
+	public void probeInto(FastState s, int neededDepth, ProbeResult r) {
+		probeInto(s.zobristHash, neededDepth, r);
+	}
+
+	/** Come {@link #store(long, int, double, byte, int)} ma identifica la posizione dallo stato (si veda {@link #probeInto(FastState, int, ProbeResult)}). */
+	public void store(FastState s, int depth, double score, byte flag, int packedMove) {
+		store(s.zobristHash, depth, score, flag, packedMove);
 	}
 
 	private static void fillProbe(ProbeResult r, long meta, long scoreBits, int neededDepth) {

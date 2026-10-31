@@ -68,6 +68,21 @@ public final class FastState {
 	/** Hash Zobrist della posizione, sempre aggiornato (si veda {@link ZobristHash}). */
 	public long zobristHash;
 
+	/** Bit del turno (Nero di turno e partita non finita) dentro {@link #key2}: stessa regola del turno nello Zobrist. */
+	public static final long KEY2_TURN_BIT = 1L << 34;
+	/** Codice a 2 bit di ogni pezzo nella chiave esatta: EMPTY=0, WHITE=1, BLACK=2, KING=3 (indice = valore di {@code board}). */
+	private static final byte[] KEY_CODE = { 0, 1, 2, 0, 3 };
+
+	/**
+	 * CHIAVE ESATTA della posizione, sempre aggiornata come {@link #zobristHash} (negli stessi punti): non e' un hash ma la
+	 * posizione stessa, 2 bit per cella piu' il turno, 163 bit in 3 long. {@code key0} = celle 0..31, {@code key1} = celle 32..63,
+	 * {@code key2} = celle 64..80 (34 bit) e {@link #KEY2_TURN_BIT}. Due posizioni hanno la stessa chiave se e solo se hanno la stessa
+	 * scacchiera e lo stesso turno (con la partita finita il turno non conta, come nello Zobrist): niente collisioni possibili.
+	 * Vale solo finche' la scacchiera cambia attraverso {@code makeMove}/{@code unmakeMove}/caricamento; chi scrive {@code board} o
+	 * {@code turn} a mano (solo test) deve chiamare {@link #computeKeys()}.
+	 */
+	public long key0, key1, key2;
+
 	/** Posizione iniziale di Ashton Tablut, Bianco di turno. */
 	public FastState() {
 		initInitialState();
@@ -98,6 +113,7 @@ public final class FastState {
 		blackCount = 16;
 		winner = WINNER_NONE;
 		zobristHash = computeHash();
+		computeKeys();
 	}
 
 	/** Copia di {@code other} (stesso contenuto, nessuna condivisione). */
@@ -115,6 +131,9 @@ public final class FastState {
 		this.blackCount = other.blackCount;
 		this.winner = other.winner;
 		this.zobristHash = other.zobristHash;
+		this.key0 = other.key0;
+		this.key1 = other.key1;
+		this.key2 = other.key2;
 	}
 
 	public FastState duplicate() {
@@ -174,6 +193,7 @@ public final class FastState {
 			winner = WINNER_DRAW;
 		}
 		zobristHash = computeHash();
+		computeKeys();
 	}
 
 	/**
@@ -223,6 +243,39 @@ public final class FastState {
 	/** Hash Zobrist di uno {@code State}: la chiave con cui la ricerca e la TT identificano quella posizione. */
 	public static long hashOf(State s) {
 		return fromState(s).zobristHash;
+	}
+
+	/** Aggiorna la chiave esatta: il pezzo di codice {@code code} entra o esce dalla cella {@code sq} (XOR). */
+	private void xorCell(int sq, int code) {
+		final long v = (long) code << ((sq & 31) << 1);
+		if (sq < 32) {
+			key0 ^= v;
+		} else if (sq < 64) {
+			key1 ^= v;
+		} else {
+			key2 ^= v;
+		}
+	}
+
+	/** Ricalcola da zero (O(81)) la chiave esatta dalla scacchiera, dal turno e dal vincitore, e la assegna a {@link #key0}..{@link #key2}. */
+	public void computeKeys() {
+		long a = 0L, c = 0L, d = 0L;
+		for (int sq = 0; sq < BoardConstants.NUM_SQUARES; sq++) {
+			final long v = (long) KEY_CODE[board[sq]] << ((sq & 31) << 1);
+			if (sq < 32) {
+				a |= v;
+			} else if (sq < 64) {
+				c |= v;
+			} else {
+				d |= v;
+			}
+		}
+		if (winner == WINNER_NONE && turn == BoardConstants.BLACK_TURN) {
+			d |= KEY2_TURN_BIT;
+		}
+		key0 = a;
+		key1 = c;
+		key2 = d;
 	}
 
 	/** Hash ricalcolato da zero (O(81)); coincide sempre con {@link #zobristHash} (lo verifica {@code FastStateCheck}). */
@@ -353,6 +406,9 @@ public final class FastState {
 		undo.oldTurn = turn;
 		undo.oldKingSquare = kingSquare;
 		undo.oldZobristHash = zobristHash;
+		undo.oldKey0 = key0;
+		undo.oldKey1 = key1;
+		undo.oldKey2 = key2;
 
 		final long[][] key = ZobristHash.KEY;
 		long h = zobristHash ^ key[from][piece] ^ key[to][piece];
@@ -360,6 +416,8 @@ public final class FastState {
 			h ^= ZobristHash.THRONE_EMPTY_KEY; // il Re lascia il trono: ora e' vuoto
 		}
 		zobristHash = h;
+		xorCell(from, KEY_CODE[piece]);
+		xorCell(to, KEY_CODE[piece]);
 		b[from] = BoardConstants.EMPTY;
 		b[to] = piece;
 
@@ -381,6 +439,9 @@ public final class FastState {
 		turn = (byte) (turn ^ 1);
 		final long turnNew = (newWinner == WINNER_NONE && turn == BoardConstants.BLACK_TURN) ? ZobristHash.TURN_KEY : 0L;
 		zobristHash ^= turnOld ^ turnNew;
+		if ((turnOld != 0L) != (turnNew != 0L)) {
+			key2 ^= KEY2_TURN_BIT;
+		}
 	}
 
 	/** Annulla l'ultima {@link #makeMove} (stessa {@code move}, stesso {@code undo}), ripristinando ESATTAMENTE lo stato precedente. */
@@ -404,6 +465,9 @@ public final class FastState {
 		kingSquare = undo.oldKingSquare;
 		winner = WINNER_NONE;
 		zobristHash = undo.oldZobristHash;
+		key0 = undo.oldKey0;
+		key1 = undo.oldKey1;
+		key2 = undo.oldKey2;
 	}
 
 	// ------------------------------------------------------------------------------------------ catture
@@ -432,6 +496,7 @@ public final class FastState {
 				undo.addCapture(adj, BoardConstants.BLACK);
 				blackCount--;
 				zobristHash ^= ZobristHash.KEY[adj][BoardConstants.BLACK];
+				xorCell(adj, KEY_CODE[BoardConstants.BLACK]);
 			}
 		}
 	}
@@ -462,6 +527,7 @@ public final class FastState {
 					undo.addCapture(adj, BoardConstants.WHITE);
 					whiteCount--;
 					zobristHash ^= ZobristHash.KEY[adj][BoardConstants.WHITE];
+					xorCell(adj, KEY_CODE[BoardConstants.WHITE]);
 				}
 			} else if (p == BoardConstants.KING) {
 				if (isKingCaptured(adj, to, off, steps >= 2)) {
@@ -470,6 +536,7 @@ public final class FastState {
 					kingCaptured = true;
 					undo.addCapture(adj, BoardConstants.KING);
 					zobristHash ^= ZobristHash.KEY[adj][BoardConstants.KING];
+					xorCell(adj, KEY_CODE[BoardConstants.KING]);
 					if (adj == BoardConstants.THRONE) {
 						zobristHash ^= ZobristHash.THRONE_EMPTY_KEY; // la cella 40 e' ora vuota
 					}

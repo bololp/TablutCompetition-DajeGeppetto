@@ -71,6 +71,7 @@ public final class CachingEvaluator implements Evaluator {
 	private final NeuralEvaluator nn;
 	private final CnnEvaluator cnn;
 	private final double scale0;
+	private final boolean stateKey;
 
 	/** @param log2Entries la cache ha {@code 2^log2Entries} voci di 32 byte, con {@code log2Entries} in [4, 26] */
 	public CachingEvaluator(Evaluator inner, int log2Entries) {
@@ -79,6 +80,16 @@ public final class CachingEvaluator implements Evaluator {
 
 	/** @param stats vero per contare chiamate, hit e salti (LongAdder: contesa trascurabile ma non nulla; spento di default) */
 	public CachingEvaluator(Evaluator inner, int log2Entries, boolean stats) {
+		this(inner, log2Entries, stats, false);
+	}
+
+	/**
+	 * @param stateKey vero per usare la chiave esatta gia' mantenuta dallo stato ({@link FastState#key0}..{@link FastState#key2}) invece di
+	 *                 ricodificare 81 celle a ogni lookup: stesso formato di chiave, stessa identita', meno costo per chiamata. Richiede che la
+	 *                 chiave dello stato sia aggiornata (vale per ogni stato prodotto da makeMove/unmakeMove/caricamento; chi scrive la scacchiera a
+	 *                 mano deve chiamare {@link FastState#computeKeys()}). Falso = si ricodifica dalla scacchiera, indipendente dalla chiave dello stato.
+	 */
+	public CachingEvaluator(Evaluator inner, int log2Entries, boolean stats, boolean stateKey) {
 		if (inner == null) {
 			throw new IllegalArgumentException("evaluator nullo");
 		}
@@ -94,6 +105,12 @@ public final class CachingEvaluator implements Evaluator {
 		this.nn = inner instanceof NeuralEvaluator ? (NeuralEvaluator) inner : null;
 		this.cnn = inner instanceof CnnEvaluator ? (CnnEvaluator) inner : null;
 		this.scale0 = currentScale();
+		this.stateKey = stateKey;
+	}
+
+	/** Vero se la cache usa la chiave esatta mantenuta dallo stato ({@code FastState.key0..key2}), falso se la ricodifica dalla scacchiera. */
+	public boolean isStateKey() {
+		return stateKey;
 	}
 
 	/** Vero per gli evaluator di cui e' stato verificato che dipendono solo da {@code board} e {@code turn}: MLP e CNN. */
@@ -104,6 +121,11 @@ public final class CachingEvaluator implements Evaluator {
 	/** {@code e} avvolto in una cache di 2^log2Entries voci se e' MLP/CNN e {@code log2Entries > 0}, altrimenti {@code e} stesso. */
 	public static Evaluator wrapIfCacheable(Evaluator e, int log2Entries) {
 		return log2Entries > 0 && isCacheable(e) ? new CachingEvaluator(e, log2Entries) : e;
+	}
+
+	/** Come {@link #wrapIfCacheable(Evaluator, int)} scegliendo se la chiave viene dallo stato ({@code stateKey}) o ricodificata dalla scacchiera. */
+	public static Evaluator wrapIfCacheable(Evaluator e, int log2Entries, boolean stateKey) {
+		return log2Entries > 0 && isCacheable(e) ? new CachingEvaluator(e, log2Entries, false, stateKey) : e;
 	}
 
 	/** Byte occupati da una cache di 2^log2Entries voci (32 per voce). */
@@ -126,33 +148,43 @@ public final class CachingEvaluator implements Evaluator {
 
 	@Override
 	public double evaluate(FastState state) {
-		final byte[] b = state.board;
-		final int turn = state.turn;
-		if (b.length != 81 || (turn & ~1) != 0 || ((nn != null || cnn != null) && currentScale() != scale0)) {
+		if ((nn != null || cnn != null) && currentScale() != scale0) {
 			return bypass(state);
 		}
-		final byte[] code = CODE;
 		long k0 = 0, k1 = 0, tail = 0;
-		int bad = 0;
-		for (int i = 0; i < 32; i++) {
-			final int c = code[b[i] & 0xFF];
-			bad |= c;
-			k0 |= (long) c << (2 * i);
+		if (stateKey) {
+			// chiave esatta gia' mantenuta dallo stato: nessuna codifica, nessun controllo di dominio (la chiave e' coerente per costruzione)
+			k0 = state.key0;
+			k1 = state.key1;
+			tail = state.key2 & TAIL_KEY_MASK;
+		} else {
+			final byte[] b = state.board;
+			final int turn = state.turn;
+			if (b.length != 81 || (turn & ~1) != 0) {
+				return bypass(state);
+			}
+			final byte[] code = CODE;
+			int bad = 0;
+			for (int i = 0; i < 32; i++) {
+				final int c = code[b[i] & 0xFF];
+				bad |= c;
+				k0 |= (long) c << (2 * i);
+			}
+			for (int i = 0; i < 32; i++) {
+				final int c = code[b[32 + i] & 0xFF];
+				bad |= c;
+				k1 |= (long) c << (2 * i);
+			}
+			for (int i = 0; i < 17; i++) {
+				final int c = code[b[64 + i] & 0xFF];
+				bad |= c;
+				tail |= (long) c << (2 * i);
+			}
+			if (bad < 0) { // almeno una cella fuori dominio (codice -1 = tutti i bit a 1)
+				return bypass(state);
+			}
+			tail |= (long) turn << 34;
 		}
-		for (int i = 0; i < 32; i++) {
-			final int c = code[b[32 + i] & 0xFF];
-			bad |= c;
-			k1 |= (long) c << (2 * i);
-		}
-		for (int i = 0; i < 17; i++) {
-			final int c = code[b[64 + i] & 0xFF];
-			bad |= c;
-			tail |= (long) c << (2 * i);
-		}
-		if (bad < 0) { // almeno una cella fuori dominio (codice -1 = tutti i bit a 1)
-			return bypass(state);
-		}
-		tail |= (long) turn << 34;
 
 		// indice dalla chiave ESATTA (non dallo Zobrist: un hash incoerente darebbe solo piu' miss)
 		final int base = ((int) mix(k0 ^ mix(k1 ^ mix(tail))) & mask) << 2;

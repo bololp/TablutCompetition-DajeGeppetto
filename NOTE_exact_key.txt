@@ -1,0 +1,79 @@
+CHIAVE UNICA ESATTA: TT + cache sulla stessa chiave (opzione exactkey=true, spenta di default)
+==============================================================================================
+
+ORDINE DI APPLICAZIONE
+  Questa patch va applicata SOPRA la precedente (cache-and-order-rec.patch):  originale -> patch 1 -> exact-key-tt.patch
+    patch -p1 < cache-and-order-rec.patch ; patch -p1 < exact-key-tt.patch
+  (i file dell'archivio sono le versioni finali con entrambe le patch applicate; il banco di confronto sta in bench/)
+
+FILE (11 nel repo: 8 modificati, 3 aggiunti; nessun commit)
+  modificati
+    engine/FastState.java        chiave esatta key0,key1,key2 mantenuta in makeMove/unmakeMove/copyFrom/caricamento; computeKeys()
+    engine/UndoInfo.java         oldKey0..2 per l'unmake
+    aiplayer/TranspositionTable.java   NUOVI probeInto(FastState,..)/store(FastState,..): di default usano lo Zobrist (comportamento identico)
+    aiplayer/Negamax.java        3 righe (probe/store passano lo stato) + costruttore con TT iniettabile; il comportamento di default non cambia
+    aiplayer/CachingEvaluator.java     modalita' stateKey: legge la chiave dallo stato invece di ricodificare la scacchiera
+    client/TablutNegamaxClient.java    opzione exactkey=, conto memoria (40 B/voce), banner dedotto dagli oggetti costruiti
+    client/NegamaxClientArgsCheck.java, client/ClientDefaultsCheck.java   test aggiornati
+  aggiunti
+    aiplayer/ExactTranspositionTable.java, aiplayer/ExactKeyStackCheck.java, selftest/ExactKeyCheck.java
+
+COMPORTAMENTO
+  * Senza exactkey il motore gioca come prima (stessi nodi e stesse mosse: verificato). Il solo costo e' che FastState mantiene sempre
+    la chiave: con evaluator banale -3..-10% di nodi/s (0,22 -> 0,23-0,24 us/nodo, misura rumorosa), trascurabile con MLP/CNN.
+  * exactkey=true: TT = ExactTranspositionTable (identita' = chiave esatta: scacchiera + turno, 163 bit; indice e politica di
+    sostituzione identici alla TT a hash, slot singolo o due slot) e cache = CachingEvaluator con la chiave dello stato.
+    La cache resta comunque attiva solo con Negamax e MLP/CNN. Con algo=mcts l'opzione viene ignorata con un avviso.
+  * Chiave: 2 bit/cella (EMPTY 0, WHITE 1, BLACK 2, KING 3) + bit del turno (Nero di turno e partita non finita: stessa regola dello
+    Zobrist). Stessa chiave <=> stessa scacchiera e stesso turno <=> stesso Zobrist (verificato su 435.158 posizioni distinte).
+  * Concorrenza TT: voce = 5 long [k0,k1,coda,punteggio,ctl]; ctl = versione (seqlock, bit basso = scrittura in corso) + meta.
+    Lettura = ctl, dati, rilettura di ctl; scrittura = CAS a versione dispari, dati, versione pari+2; se un altro thread scrive, si rinuncia.
+  * La chiave vale solo se la scacchiera cambia attraverso makeMove/unmakeMove/caricamento: chi scrive board/turn a mano (solo test)
+    deve chiamare FastState.computeKeys(). Nel codice di produzione nessuno scrive board fuori da FastState (verificato con grep).
+  * NON diventano esatti: il rilevamento delle ripetizioni e la storia (usano ancora lo Zobrist).
+
+MEMORIA
+  TT esatta: 40 byte per voce (2^22 voci = 160 MiB; a hash: 24 B = 96 MiB). Il client conta i 40 B nel tetto di meta' heap:
+  con 2 GiB di heap la TT scende da 2^25 (768 MB, hash) a 2^24 voci (640 MB, esatta): a pari memoria meta' delle voci per l'arrotondamento a potenza di 2.
+  Cache: 32 B per voce (128 MiB a 2^22), tetto un ottavo dell'heap, invariato.
+
+TEST ESEGUITI (JDK 21 in sandbox a 1 core, bytecode -source 8 -target 8; dalla copia con le due patch applicate)
+  Nuovi/aggiornati, tutti OK: selftest.ExactKeyCheck (1.631.825 verifiche), aiplayer.ExactKeyStackCheck, aiplayer.CachingEvaluatorCheck,
+    client.NegamaxClientArgsCheck, client.ClientDefaultsCheck
+  Esistenti, OK: FastStateCheck (19.744.399 verifiche, 0 discordanze), NoAllocationCheck (-Dnoalloc.order=rec), TwoSlotTTCheck,
+    TTCorrectnessCheck, LazySmpCheck. Nel giro completo su repo di lavoro anche: PVSCheck, OrderingExtCheck, SearchOptimizationsCheck,
+    RepetitionAndStalemateCheck, CnnEvaluatorCheck, FeatureConversionCheck: OK.
+  aiplayer.SearchEquivalenceCheck: 4615/4616; 1 FALLIMENTO PREESISTENTE ("copertura: troppe poche ricerche effettivamente interrotte
+    (53/80)"), identico sul progetto originale non modificato.
+  NON eseguiti: Ant, JVM 8 reale, 4 core reali, partite contro il server, 60 s con TT sature.
+  Cosa verifica ExactKeyStackCheck: parita' con la TT a hash (1,5 M operazioni, slot singolo e due slot, tabelle da 16/64/1024 voci);
+    collisione di hash forzata (la TT a hash viene ingannata, quella esatta no); ogni cella e il turno contano; seqlock deterministico;
+    8 thread su tabelle minuscole; ricerca con la catena esatta == catena a hash (stessa mossa/punteggio/nodi/profondita', Simple/MLP/CNN,
+    base e rec, uno e due slot); cache dallo stato == cache che ricodifica; 0,0014 B/nodo allocati; Lazy SMP a 4 thread.
+
+MUTAZIONI
+  FastState (ExactKeyCheck): 8 su 8 uccisi (catture Nero/Bianco/Re, turno, unmake, casella di arrivo, copyFrom, codice del Re).
+  TT esatta (ExactKeyStackCheck): uccisi k1/coda non confrontati, versione dispari ignorata in lettura, scrittura senza guardia ne CAS,
+    sostituzione a >, assenza di aging, newSearch senza generazione, depthSufficient con >, SAME ignorato. SOPRAVVISSUTI: (T4) tolta la
+    rilettura finale di ctl nel lettore: protegge da letture strappate che richiedono interleaving di pochi ns, non provocabile su 1 CPU;
+    (T5) tolta la sola guardia ma non il CAS: mutante EQUIVALENTE (il CAS fallisce comunque). Da rieseguire su 4 core.
+  Cache dallo stato: 2 su 2 uccisi.
+
+MISURE (stessa sessione, 1 core, a parita' di nodi e decisioni; minimo e mediana di 3-5 ripetizioni a ordine ruotato; tempo rispetto a nessuna cache)
+  MLP d=4:  cache solo hash -13% | esatta ricodificata -5% | esatta dallo stato -13% | TT esatta sola +3% | chiave unica -12%
+  MLP d=5:  -23% | -14% | -22% | +2% | -20%
+  CNN d=3:  -23% | -18% | -21% | +1% | -22%
+  Simple d=5: +5% | +55% | +22% | +2% | +25%   (la cache non conviene con Simple)
+  Micro (ns): TT hash probe hit 153 / miss 135 / store 137; TT esatta 123 / 160 / 188.
+              cache solo hash hit 140 / miss+scrittura 106; ricodificata 193 / 293; dallo stato 129 / 199.
+  Letture: la cache con chiave dallo stato recupera quasi tutta la velocita' della versione solo hash restando esatta; la TT esatta
+  da sola costa 0-3% (nel rumore a questa scala) e il suo costo vero e' la memoria. Le TT del banco (2^22 voci) non erano sature:
+  l'effetto della perdita di voci a pari memoria non e' misurato.
+
+BANCO DI CONFRONTO (bench/): KeyStackBench.java + HashCachingEvaluator.java (la cache originale solo hash, rinominata)
+  Da Tablut, dopo aver applicato le due patch e compilato in OUT:
+    javac -source 8 -target 8 -encoding iso-8859-1 -d OUT -cp "OUT:lib/gson-2.2.2.jar:lib/commons-cli-1.4.jar" bench/Tablut/src/.../aiplayer/*.java
+    CP="OUT:lib/gson-2.2.2.jar:lib/commons-cli-1.4.jar"; C=it.unibo.ai.didattica.competition.tablut.aiplayer.KeyStackBench
+    java -Xss4m -Xmx5g -cp "$CP" $C micro
+    java -Xss4m -Xmx5g -cp "$CP" $C game mlp 4 5        (anche: game mlp 5 3 | game cnn 3 5 | game simple 5 5)
+  Controlla che dica "stesse mosse e stessi nodi in tutte le modalita': si". Pesi: -Dtablut.weights=/percorso/pesi_v4/ (con '/' finale).

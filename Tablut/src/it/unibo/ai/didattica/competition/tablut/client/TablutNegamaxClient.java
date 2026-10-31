@@ -8,12 +8,14 @@ import java.util.List;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.CachingEvaluator;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Evaluator;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.EvaluatorLoader;
+import it.unibo.ai.didattica.competition.tablut.aiplayer.ExactTranspositionTable;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Mcts;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.MctsConfig;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.MoveSearcher;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Negamax;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.NegamaxSearcher;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.OrderingSpec;
+import it.unibo.ai.didattica.competition.tablut.aiplayer.TranspositionTable;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.SimpleEvaluator;
 import it.unibo.ai.didattica.competition.tablut.domain.Action;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
@@ -42,6 +44,9 @@ public class TablutNegamaxClient extends TablutClient {
 
 	/** Bit della dimensione della cache delle valutazioni (MLP/CNN) di {@link #main} se non c'e' {@code evcache=}: 2^22 voci = 128 MiB. */
 	static final int DEFAULT_EVAL_CACHE_LOG2 = 22;
+
+	/** Se {@link #main} usa la chiave esatta (TT e cache) quando non c'e' {@code exactkey=}: no, come prima. */
+	static final boolean DEFAULT_EXACT_KEY = false;
 
 	/** Timeout (in secondi) dichiarato dal server/arbitro per ogni mossa. */
 	private final int timeoutSeconds;
@@ -107,6 +112,15 @@ public class TablutNegamaxClient extends TablutClient {
 	 * @throws IllegalArgumentException algoritmo o parametri MCTS non validi
 	 */
 	static MoveSearcher buildSearcher(String algo, String mctsSpec, Evaluator evaluator, int threads, long margin, int order, int ttLog2, boolean twoSlot) {
+		return buildSearcher(algo, mctsSpec, evaluator, threads, margin, order, ttLog2, twoSlot, false);
+	}
+
+	/**
+	 * Come sopra; con {@code exactKeys} la TT di Negamax e' una {@link ExactTranspositionTable} (identita' = chiave esatta della posizione,
+	 * non lo Zobrist; 40 byte per voce invece di 24). Ignorato per l'MCTS, che non ha una TT.
+	 */
+	static MoveSearcher buildSearcher(String algo, String mctsSpec, Evaluator evaluator, int threads, long margin, int order, int ttLog2, boolean twoSlot,
+			boolean exactKeys) {
 		if (normalizeAlgo(algo).equals("mcts")) {
 			final MctsConfig cfg = MctsConfig.parse(mctsSpec);
 			if (cfg.maxNodes == 0) {
@@ -114,7 +128,8 @@ public class TablutNegamaxClient extends TablutClient {
 			}
 			return new Mcts(evaluator, cfg, threads).setSafetyMarginMillis(margin);
 		}
-		return new NegamaxSearcher(new Negamax(evaluator, 40, true, 1 << ttLog2, true, order, threads, twoSlot).setThreads(threads)
+		final TranspositionTable table = exactKeys ? new ExactTranspositionTable(1 << ttLog2, twoSlot) : null;
+		return new NegamaxSearcher(new Negamax(evaluator, 40, true, 1 << ttLog2, true, order, threads, twoSlot, table).setThreads(threads)
 				.setSafetyMarginMillis(margin));
 	}
 
@@ -124,6 +139,11 @@ public class TablutNegamaxClient extends TablutClient {
 	 * conviene); altrimenti restituisce lo stesso {@code evaluator}.
 	 */
 	static Evaluator withEvalCache(String algo, Evaluator evaluator, int log2, long maxMemoryBytes) {
+		return withEvalCache(algo, evaluator, log2, maxMemoryBytes, false);
+	}
+
+	/** Come sopra; con {@code stateKey} la cache legge la chiave esatta gia' mantenuta dallo stato invece di ricodificare la scacchiera. */
+	static Evaluator withEvalCache(String algo, Evaluator evaluator, int log2, long maxMemoryBytes, boolean stateKey) {
 		if (!algo.equals("negamax") || log2 <= 0 || !CachingEvaluator.isCacheable(evaluator)) {
 			return evaluator;
 		}
@@ -132,7 +152,7 @@ public class TablutNegamaxClient extends TablutClient {
 			System.out.println("ATTENZIONE: la cache delle valutazioni di 2^" + log2 + " voci (" + CachingEvaluator.bytesFor(log2) / (1 << 20)
 					+ " MB) supera un ottavo dell'heap (" + maxMemoryBytes / (1 << 20) + " MB): uso 2^" + fitted + ".");
 		}
-		return new CachingEvaluator(evaluator, fitted);
+		return new CachingEvaluator(evaluator, fitted, false, stateKey);
 	}
 
 	/** Dimensione in byte di una TT di 2^log2 voci (3 long ciascuna). */
@@ -140,13 +160,23 @@ public class TablutNegamaxClient extends TablutClient {
 		return (1L << log2) * 3 * 8;
 	}
 
+	/** Come {@link #ttBytes(int)}; con la chiave esatta ogni voce occupa {@link ExactTranspositionTable#ENTRY_BYTES} byte (5 long). */
+	static long ttBytes(int log2, boolean exactKeys) {
+		return exactKeys ? ExactTranspositionTable.bytesFor(1L << log2) : ttBytes(log2);
+	}
+
 	/**
 	 * Riduce {@code log2} finche' la TT sta con ampio margine nell'heap della JVM ({@code maxMemory}): un OutOfMemoryError nel mezzo
 	 * di una partita farebbe perdere per timeout. Lascia almeno meta' dell'heap al resto (alberi di ricerca, rete, GC).
 	 */
 	static int fitTtToHeap(int log2, long maxMemoryBytes) {
+		return fitTtToHeap(log2, maxMemoryBytes, false);
+	}
+
+	/** Come {@link #fitTtToHeap(int, long)} contando i byte per voce della TT scelta (24, o 40 con la chiave esatta). */
+	static int fitTtToHeap(int log2, long maxMemoryBytes, boolean exactKeys) {
 		int l = log2;
-		while (l > 12 && ttBytes(l) > maxMemoryBytes / 2) {
+		while (l > 12 && ttBytes(l, exactKeys) > maxMemoryBytes / 2) {
 			l--;
 		}
 		return l;
@@ -179,7 +209,8 @@ public class TablutNegamaxClient extends TablutClient {
 	 * {@code base} = quello storico, killer+history; le misure sui nodi lo danno in vantaggio ma NON e' ancora confermato in arena a 4 core);
 	 * {@code evcache=LOG2} sono i bit della dimensione della cache delle valutazioni di MLP/CNN ({@link CachingEvaluator}: default 22 =
 	 * 4,2 M voci = 128 MiB, al piu' un ottavo dell'heap; {@code evcache=0} la disattiva; mai usata con SimpleEvaluator ne' con MCTS,
-	 * che ha la sua); {@code tt=} sono i bit della
+	 * che ha la sua); {@code exactkey=true} (default false) identifica le posizioni con la chiave esatta, non con lo Zobrist, sia nella TT
+	 * ({@link ExactTranspositionTable}, 40 byte per voce invece di 24) sia nella cache; {@code tt=} sono i bit della
 	 * dimensione della TT (default 22 = 4,2 M voci = 100 MB; si riduce da sola se non sta nell'heap); {@code tt2=true} usa i bucket a due
 	 * slot; {@code margin=} e' il margine di sicurezza in ms tolto al timeout (default 1500 con timeout >= 20 s, altrimenti 300).
 	 * Gli argomenti facoltativi (la competizione li permette, si veda
@@ -213,6 +244,7 @@ public class TablutNegamaxClient extends TablutClient {
 		String orderName = DEFAULT_ORDER_NAME;
 		int evCacheLog2 = DEFAULT_EVAL_CACHE_LOG2;
 		int ttLog2 = 26;
+		boolean exactKey = DEFAULT_EXACT_KEY;
 		boolean twoSlot = false;
 		long margin = defaultMarginMillis(timeout);
 		boolean marginGiven = false;
@@ -230,6 +262,8 @@ public class TablutNegamaxClient extends TablutClient {
 					orderName = name;
 				} else if (low.startsWith("evcache=")) {
 					evCacheLog2 = Math.max(0, Math.min(26, Integer.parseInt(args[i].substring("evcache=".length()).trim())));
+				} else if (low.startsWith("exactkey=")) {
+					exactKey = Boolean.parseBoolean(args[i].substring("exactkey=".length()).trim());
 				} else if (low.startsWith("tt=")) {
 					ttLog2 = Math.max(12, Math.min(28, Integer.parseInt(args[i].substring("tt=".length()).trim())));
 				} else if (low.startsWith("tt2=")) {
@@ -262,9 +296,13 @@ public class TablutNegamaxClient extends TablutClient {
 		if (!mctsSpec.isEmpty() && !algo.equals("mcts")) {
 			System.out.println("ATTENZIONE: 'mcts=' ignorato perche' l'algoritmo e' " + algo + " (aggiungi algo=mcts).");
 		}
-		final int fitted = fitTtToHeap(ttLog2, Runtime.getRuntime().maxMemory());
+		if (exactKey && algo.equals("mcts")) {
+			System.out.println("ATTENZIONE: 'exactkey=' ignorato perche' l'MCTS non ha una transposition table.");
+			exactKey = false;
+		}
+		final int fitted = fitTtToHeap(ttLog2, Runtime.getRuntime().maxMemory(), exactKey);
 		if (fitted != ttLog2 && algo.equals("negamax")) {
-			System.out.println("ATTENZIONE: la TT di 2^" + ttLog2 + " voci (" + ttBytes(ttLog2) / (1 << 20) + " MB) non sta nell'heap ("
+			System.out.println("ATTENZIONE: la TT di 2^" + ttLog2 + " voci (" + ttBytes(ttLog2, exactKey) / (1 << 20) + " MB) non sta nell'heap ("
 					+ Runtime.getRuntime().maxMemory() / (1 << 20) + " MB): uso 2^" + fitted + ". Per una TT piu' grande lancia la JVM con -Xmx piu' alto.");
 			ttLog2 = fitted;
 		}
@@ -284,10 +322,16 @@ public class TablutNegamaxClient extends TablutClient {
 
 		// cache delle valutazioni: solo Negamax con una rete (si veda withEvalCache). Il decoratore e' creato QUI, subito dopo il
 		// caricamento, e solo lui e' passato alla ricerca: i pesi non cambiano piu'. Il banner descrive l'oggetto effettivo.
-		evaluator = withEvalCache(algo, evaluator, evCacheLog2, Runtime.getRuntime().maxMemory());
+		evaluator = withEvalCache(algo, evaluator, evCacheLog2, Runtime.getRuntime().maxMemory(), exactKey);
 		final String evCacheDesc = evaluator instanceof CachingEvaluator
-				? "2^" + ((CachingEvaluator) evaluator).log2Entries() + " voci (" + CachingEvaluator.bytesFor(((CachingEvaluator) evaluator).log2Entries()) / (1 << 20) + " MB)"
+				? "2^" + ((CachingEvaluator) evaluator).log2Entries() + " voci (" + CachingEvaluator.bytesFor(((CachingEvaluator) evaluator).log2Entries()) / (1 << 20) + " MB"
+						+ (((CachingEvaluator) evaluator).isStateKey() ? ", chiave esatta dallo stato" : "") + ")"
 				: "disattivata";
+
+		// la ricerca si costruisce PRIMA del banner: cosi' il banner descrive la TT effettivamente creata
+		final MoveSearcher searcher = buildSearcher(algo, mctsSpec, evaluator, threads, margin, order, ttLog2, twoSlot, exactKey);
+		final boolean exactTt = searcher instanceof NegamaxSearcher
+				&& ((NegamaxSearcher) searcher).negamax().transpositionTable() instanceof ExactTranspositionTable;
 
 		if (algo.equals("mcts")) {
 			final MctsConfig shown = MctsConfig.parse(mctsSpec);
@@ -298,11 +342,10 @@ public class TablutNegamaxClient extends TablutClient {
 		} else {
 			System.out.println("Negamax client - ruolo: " + role + " - timeout: " + timeout + "s - server: " + ipAddress
 					+ " - thread di ricerca: " + threads + " - ordinamento: " + orderName + " (modo " + order + ") - TT: 2^" + ttLog2 + " voci ("
-					+ ttBytes(ttLog2) / (1 << 20) + " MB, " + (twoSlot ? "due slot" : "slot singolo") + ") - cache valutazioni: " + evCacheDesc
+					+ ttBytes(ttLog2, exactTt) / (1 << 20) + " MB, " + (twoSlot ? "due slot" : "slot singolo") + (exactTt ? ", chiave esatta" : ", hash") + ") - cache valutazioni: " + evCacheDesc
 					+ " - margine: " + margin + " ms");
 		}
 
-		MoveSearcher searcher = buildSearcher(algo, mctsSpec, evaluator, threads, margin, order, ttLog2, twoSlot);
 		TablutNegamaxClient client = new TablutNegamaxClient(role, algo, timeout, ipAddress, searcher);
 		client.run();
 	}

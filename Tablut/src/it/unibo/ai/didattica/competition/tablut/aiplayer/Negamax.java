@@ -365,6 +365,16 @@ public class Negamax {
 	 */
 	public Negamax(Evaluator evaluator, int maxDepth, boolean useTT, int ttSize, boolean usePVS, int orderingMode,
 			int threads, boolean twoSlotTT) {
+		this(evaluator, maxDepth, useTT, ttSize, usePVS, orderingMode, threads, twoSlotTT, null);
+	}
+
+	/**
+	 * @param table la transposition table da usare (condivisa dagli helper Lazy SMP), oppure {@code null} per crearne una
+	 *              {@link TranspositionTable} di {@code ttSize} voci; serve a sostituirla, per esempio con {@link ExactTranspositionTable}.
+	 *              Ignorata se {@code useTT} e' falso.
+	 */
+	public Negamax(Evaluator evaluator, int maxDepth, boolean useTT, int ttSize, boolean usePVS, int orderingMode,
+			int threads, boolean twoSlotTT, TranspositionTable table) {
 		this.evaluator = evaluator;
 		this.maxDepth = maxDepth;
 		this.useTT = useTT;
@@ -372,7 +382,7 @@ public class Negamax {
 		this.orderingMode = orderingMode;
 		this.killers = newKillers(maxDepth);
 		this.counterMove = newCounterMove(orderingMode);
-		this.tt = useTT ? new TranspositionTable(ttSize, twoSlotTT) : null;
+		this.tt = useTT ? (table != null ? table : new TranspositionTable(ttSize, twoSlotTT)) : null;
 		this.threads = Math.max(1, Math.min(MAX_THREADS, threads));
 		this.isHelper = false;
 		allocStacks(maxDepth + 3);
@@ -755,7 +765,7 @@ public class Negamax {
 
 		if (useTT) {
 			final TranspositionTable.ProbeResult pr = probe;
-			tt.probeInto(hash, depth, pr);
+			tt.probeInto(s, depth, pr);
 			if (pr.hit) {
 				ttMovePacked = pr.packedMove; // utile per l'ordinamento anche se la profondita' non basta
 				if (pr.depthSufficient) {
@@ -791,7 +801,7 @@ public class Negamax {
 			double absolute = (s.turn == BoardConstants.WHITE_TURN) ? -(WIN_SCORE + depth) : (WIN_SCORE + depth);
 			double result = perspective * absolute;
 			if (useTT) {
-				tt.store(hash, depth, result, TranspositionTable.EXACT, -1);
+				tt.store(s, depth, result, TranspositionTable.EXACT, -1);
 			}
 			return result;
 		}
@@ -874,7 +884,7 @@ public class Negamax {
 			} else {
 				flag = TranspositionTable.EXACT;
 			}
-			tt.store(hash, depth, best, flag, bestMoveFound == Move.NONE ? -1 : bestMoveFound);
+			tt.store(s, depth, best, flag, bestMoveFound == Move.NONE ? -1 : bestMoveFound);
 		}
 
 		return best;
