@@ -46,7 +46,7 @@ public class TablutNegamaxClient extends TablutClient {
 	static final int DEFAULT_EVAL_CACHE_LOG2 = 22;
 
 	/** Se {@link #main} usa la chiave esatta (TT e cache) quando non c'e' {@code exactkey=}: no, come prima. */
-	static final boolean DEFAULT_EXACT_KEY = false;
+	static final boolean DEFAULT_EXACT_KEY = true;
 
 	/** Timeout (in secondi) dichiarato dal server/arbitro per ogni mossa. */
 	private final int timeoutSeconds;
