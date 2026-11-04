@@ -171,13 +171,8 @@ public final class SearchArena {
 				}
 				final boolean whiteToMove = s.getTurn() == Turn.WHITE;
 				final MoveSearcher who = whiteToMove ? sw : sb;
-				final List<Long> h = tracker.history();
-				final long[] hist = new long[h.size()];
-				for (int i = 0; i < hist.length; i++) {
-					hist[i] = h.get(i);
-				}
 				final long t0 = System.nanoTime();
-				final int mv = who.findBestMove(FastState.fromState(s), ms, hist, hist.length);
+				final int mv = who.findBestMove(FastState.fromState(s), ms, tracker.history());
 				(whiteToMove ? statsW : statsB).add(who, (System.nanoTime() - t0) / 1e9);
 				if (mv == Move.NONE) {
 					gr.illegal++;

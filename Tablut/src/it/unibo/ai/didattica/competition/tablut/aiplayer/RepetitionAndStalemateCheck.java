@@ -7,6 +7,8 @@ import java.util.Random;
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 import it.unibo.ai.didattica.competition.tablut.engine.Move;
 import it.unibo.ai.didattica.competition.tablut.engine.UndoInfo;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
 import it.unibo.ai.didattica.competition.tablut.domain.Action;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Pawn;
@@ -48,6 +50,7 @@ public class RepetitionAndStalemateCheck {
 
 		testRepetitionDetectedWithHistory(p0, p1, p2, p3, m4);
 		testNoRepetitionWithoutHistory(p3, m4);
+		testForgedHashCollisionIsNotRepetition(p0, p1, p2, p3, m4);
 		testRepetitionSafeWithAndWithoutTT(p0, p1, p2, p3);
 		testNoLegalMoves();
 		testNoLegalMovesCachedCorrectly();
@@ -164,6 +167,13 @@ public class RepetitionAndStalemateCheck {
 		return c.zobristHash;
 	}
 
+	/** Chiave esatta di FastState dopo aver giocato {@code m} su una COPIA di {@code root}. */
+	private static long[] keyAfter(FastState root, Action m) {
+		FastState c = root.duplicate();
+		c.makeMove(Move.fromAction(m), new UndoInfo());
+		return new long[] { c.key0, c.key1, c.key2 };
+	}
+
 	private static Action findReverse(State state, Action original) {
 		for (Action a : AshtonRules.generateMoves(state)) {
 			if (a.getFrom().equals(original.getTo()) && a.getTo().equals(original.getFrom())) {
@@ -196,24 +206,22 @@ public class RepetitionAndStalemateCheck {
 		System.out.println("--- testRepetitionDetectedWithHistory ---");
 		Negamax n = new Negamax(new SimpleEvaluator(), 10).setThreads(1);
 
-		long h0 = ZobristHasher.fullHash(p0);
-		long h1 = ZobristHasher.fullHash(p1);
-		long h2 = ZobristHasher.fullHash(p2);
-		long h3 = ZobristHasher.fullHash(p3);
-		List<Long> history = new ArrayList<>();
-		history.add(h0);
-		history.add(h1);
-		history.add(h2);
-		history.add(h3);
+		PositionHistory history = new PositionHistory();
+		TestPositions.addTo(history, p0);
+		TestPositions.addTo(history, p1);
+		TestPositions.addTo(history, p2);
+		TestPositions.addTo(history, p3);
 
 		State p4 = AshtonRules.applyMove(p3, m4);
-		long h4 = ZobristHasher.fullHash(p4);
-		check("la mossa finale ricrea esattamente l'hash della posizione iniziale", h4 == h0);
+		final long[] k0 = TestPositions.exactKey(p0), k4 = TestPositions.exactKey(p4);
+		check("la mossa finale ricrea esattamente la posizione iniziale (stessa chiave esatta)", java.util.Arrays.equals(k4, k0));
+		check("... e anche lo stesso hash storico", ZobristHasher.fullHash(p4) == ZobristHasher.fullHash(p0));
 
 		long counterBefore = n.repetitionEventCounter;
 		FastState root = FastState.fromState(p3);
 		n.installForTest(root, history, 3);
-		check("l'hash incrementale di FastState dopo la mossa coincide con quello storico", hashAfter(root, m4) == h4);
+		check("l'hash incrementale di FastState dopo la mossa coincide con quello storico", hashAfter(root, m4) == ZobristHasher.fullHash(p4));
+		check("la chiave esatta incrementale di FastState dopo la mossa coincide con quella calcolata in modo indipendente", java.util.Arrays.equals(keyAfter(root, m4), k4));
 		double score = n.exploreChild(Move.fromAction(m4), 3, -1e9, 1e9, 1, 0);
 		check("con la storia corretta, la ripetizione e' un pareggio esatto (punteggio 0)", score == 0.0);
 		check("il contatore di ripetizioni e' stato incrementato", n.repetitionEventCounter == counterBefore + 1);
@@ -221,19 +229,68 @@ public class RepetitionAndStalemateCheck {
 		check("la storia e' tornata alla lunghezza iniziale", n.historyLengthForTest() == history.size());
 	}
 
+	// ------------------------------------------------------------------
+	// Test 1b: una collisione di hash NON puo' diventare una ripetizione
+	// ------------------------------------------------------------------
+
+	/**
+	 * La storia contiene, al posto di P0, una posizione DIVERSA con lo stesso hash Zobrist (collisione forzata). Con la storia a hash la mossa
+	 * che ricrea P0 sarebbe stata scambiata per una ripetizione (pareggio 0 fantasma); con le chiavi esatte non deve esserlo, per nessuno dei
+	 * tre long della chiave e per il turno. Controprova: con la storia VERA la stessa mossa e' una ripetizione.
+	 */
+	private static void testForgedHashCollisionIsNotRepetition(State p0, State p1, State p2, State p3, Action m4) {
+		System.out.println("--- testForgedHashCollisionIsNotRepetition ---");
+		final FastState f0 = FastState.fromState(p0);
+		final FastState root = FastState.fromState(p3);
+		final FastState[] variants = MctsTestSupport.collidingVariants(f0);
+		final int move = Move.fromAction(m4);
+		for (int v = 0; v < variants.length; v++) {
+			final FastState forged = variants[v];
+			check("variante " + v + ": e' una posizione diversa con lo stesso hash di P0",
+				forged.zobristHash == f0.zobristHash && !(forged.key0 == f0.key0 && forged.key1 == f0.key1 && forged.key2 == f0.key2));
+			// con una storia A HASH la collisione sarebbe stata una (falsa) ripetizione: lo documentiamo
+			final java.util.List<Long> hashHistory = new java.util.ArrayList<>();
+			hashHistory.add(forged.zobristHash);
+			check("variante " + v + ": una storia a hash la scambierebbe per P0 (il rischio che le chiavi esatte eliminano)", hashHistory.contains(f0.zobristHash));
+
+			final PositionHistory history = new PositionHistory();
+			history.add(forged);
+			history.add(FastState.fromState(p1));
+			history.add(FastState.fromState(p2));
+			history.add(root);
+			final Negamax n = new Negamax(new SimpleEvaluator(), 10).setThreads(1);
+			final long counterBefore = n.repetitionEventCounter;
+			n.installForTest(root, history, 0);
+			// profondita' 0 per il figlio, come in testNoRepetitionWithoutHistory: nessuna ripetizione puo' nascere nel sottoalbero,
+			// quindi solo un falso riconoscimento alla radice del figlio darebbe punteggio 0 e conterebbe un evento
+			final double score = n.exploreChild(move, 0, -1e9, 1e9, 1, 0);
+			check("variante " + v + ": la collisione NON e' trattata come ripetizione (punteggio != 0)", score != 0.0);
+			check("variante " + v + ": il contatore di ripetizioni non e' cambiato", n.repetitionEventCounter == counterBefore);
+		}
+		// controprova: con la storia VERA la stessa mossa e' una ripetizione
+		final PositionHistory real = new PositionHistory();
+		real.add(f0);
+		real.add(FastState.fromState(p1));
+		real.add(FastState.fromState(p2));
+		real.add(root);
+		final Negamax n = new Negamax(new SimpleEvaluator(), 10).setThreads(1);
+		final long counterBefore = n.repetitionEventCounter;
+		n.installForTest(root, real, 0);
+		check("controprova: con la storia vera la mossa e' una ripetizione (punteggio 0)", n.exploreChild(move, 0, -1e9, 1e9, 1, 0) == 0.0);
+		check("controprova: il contatore e' incrementato", n.repetitionEventCounter == counterBefore + 1);
+	}
+
 	private static void testNoRepetitionWithoutHistory(State p3, Action m4) {
 		System.out.println("--- testNoRepetitionWithoutHistory ---");
 		Negamax n = new Negamax(new SimpleEvaluator(), 10).setThreads(1);
 
-		State p4 = AshtonRules.applyMove(p3, m4);
-		long h4 = ZobristHasher.fullHash(p4);
 		long counterBefore = n.repetitionEventCounter;
 
 		// STESSA posizione, STESSA mossa, ma SENZA storia: non deve essere
 		// affatto trattata come ripetizione (altrimenti scatterebbe per
 		// coincidenza sulla board, non per la vera storia della partita).
 		FastState root = FastState.fromState(p3);
-		n.installForTest(root, new ArrayList<Long>(), 0);
+		n.installForTest(root, PositionHistory.empty(), 0);
 		double score = n.exploreChild(Move.fromAction(m4), 0, -1e9, 1e9, 1, 0);
 		check("senza storia, la stessa posizione NON e' trattata come pareggio", score != 0.0);
 		check("il contatore di ripetizioni non e' cambiato", n.repetitionEventCounter == counterBefore);
@@ -247,13 +304,10 @@ public class RepetitionAndStalemateCheck {
 
 	private static void testRepetitionSafeWithAndWithoutTT(State p0, State p1, State p2, State p3) {
 		System.out.println("--- testRepetitionSafeWithAndWithoutTT ---");
-		long h0 = ZobristHasher.fullHash(p0);
-		long h1 = ZobristHasher.fullHash(p1);
-		long h2 = ZobristHasher.fullHash(p2);
-		List<Long> history = new ArrayList<>();
-		history.add(h0);
-		history.add(h1);
-		history.add(h2);
+		PositionHistory history = new PositionHistory();
+		TestPositions.addTo(history, p0);
+		TestPositions.addTo(history, p1);
+		TestPositions.addTo(history, p2);
 		long generousBudget = 200_000L;
 
 		for (int depth = 2; depth <= 5; depth++) {
@@ -317,7 +371,7 @@ public class RepetitionAndStalemateCheck {
 		Negamax n = new Negamax(new SimpleEvaluator(), 5).setThreads(1);
 		long hash = ZobristHasher.fullHash(s);
 		int depth = 3;
-		n.installForTest(FastState.fromState(s), new ArrayList<Long>(), depth);
+		n.installForTest(FastState.fromState(s), PositionHistory.empty(), depth);
 		check("l'hash di FastState coincide con quello storico anche per questa posizione artificiale", n.workingState().zobristHash == hash);
 		double score = n.negamax(depth, -1e9, 1e9, 1, 0);
 		double expected = -(Negamax.WIN_SCORE + depth); // perspective=1 (bianco): sconfitta = punteggio molto negativo
@@ -332,7 +386,7 @@ public class RepetitionAndStalemateCheck {
 		long hash = ZobristHasher.fullHash(s);
 		int depth = 3;
 
-		n.installForTest(FastState.fromState(s), new ArrayList<Long>(), depth);
+		n.installForTest(FastState.fromState(s), PositionHistory.empty(), depth);
 		double first = n.negamax(depth, -1e9, 1e9, 1, 0);
 
 		TranspositionTable.ProbeResult probe = n.tt.probe(hash, depth);

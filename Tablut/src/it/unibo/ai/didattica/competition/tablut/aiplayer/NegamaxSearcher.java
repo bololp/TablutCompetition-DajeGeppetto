@@ -1,6 +1,7 @@
 package it.unibo.ai.didattica.competition.tablut.aiplayer;
 
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 
 /**
  * Adattatore che fa di {@link Negamax} un {@link MoveSearcher}. Non aggiunge logica: inoltra le chiamate e legge i campi
@@ -23,8 +24,8 @@ public final class NegamaxSearcher implements MoveSearcher {
 	}
 
 	@Override
-	public int findBestMove(FastState root, long timeBudgetMillis, long[] history, int historyLen) {
-		return negamax.findBestMove(root, timeBudgetMillis, history, historyLen);
+	public int findBestMove(FastState root, long timeBudgetMillis, PositionHistory history) {
+		return negamax.findBestMove(root, timeBudgetMillis, history);
 	}
 
 	@Override

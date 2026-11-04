@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicLongArray;
 
 import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 
 /**
  * Verifica la catena a chiave esatta: {@link ExactTranspositionTable} e {@link CachingEvaluator} con {@code stateKey=true}.
@@ -403,8 +404,8 @@ public class ExactKeyStackCheck {
 					int n = 0;
 					for (int i = 0; i < 400 && n < 6; i += 53, n++) {
 						FastState root = pool.get(i);
-						int m1 = plain.findBestMove(root, 1_000_000_000L, new long[0], 0);
-						int m2 = exact.findBestMove(root, 1_000_000_000L, new long[0], 0);
+						int m1 = plain.findBestMove(root, 1_000_000_000L, PositionHistory.empty());
+						int m2 = exact.findBestMove(root, 1_000_000_000L, PositionHistory.empty());
 						String w = name + "/" + oname[o] + "/" + (two ? "2slot" : "1slot") + " pos " + i;
 						check(m1 == m2, w + ": mossa diversa");
 						check(same(plain.lastScore, exact.lastScore), w + ": punteggio diverso (" + plain.lastScore + " vs " + exact.lastScore + ")");
@@ -437,12 +438,12 @@ public class ExactKeyStackCheck {
 			for (boolean two : new boolean[] { false, true }) {
 				Negamax nm = new Negamax(new SimpleEvaluator(), 4, true, 1 << 16, true, OrderingSpec.parse("rec"), 1, two, new ExactTranspositionTable(1 << 16, two));
 				for (int i = 0; i < 4; i++) {
-					nm.findBestMove(pool.get(i * 7), 1_000_000_000L, new long[0], 0); // scaldamento
+					nm.findBestMove(pool.get(i * 7), 1_000_000_000L, PositionHistory.empty()); // scaldamento
 				}
 				long a0 = (Long) m.invoke(bean, id);
 				long nodes = 0;
 				for (int i = 4; i < 8; i++) {
-					nm.findBestMove(pool.get(i * 7), 1_000_000_000L, new long[0], 0);
+					nm.findBestMove(pool.get(i * 7), 1_000_000_000L, PositionHistory.empty());
 					nodes += nm.lastNodeCount;
 				}
 				long a1 = (Long) m.invoke(bean, id);
@@ -464,7 +465,7 @@ public class ExactKeyStackCheck {
 		for (int i = 0; i < 3; i++) {
 			FastState root = pool.get(10 + i * 31);
 			int n = root.generateMoves(buf);
-			int mv = smp.findBestMove(root, 400, new long[0], 0);
+			int mv = smp.findBestMove(root, 400, PositionHistory.empty());
 			boolean legal = false;
 			for (int k = 0; k < n; k++) {
 				legal |= buf[k] == mv;

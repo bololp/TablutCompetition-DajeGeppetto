@@ -3,7 +3,6 @@ package it.unibo.ai.didattica.competition.tablut.aiplayer;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -19,6 +18,7 @@ import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 import it.unibo.ai.didattica.competition.tablut.engine.Move;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 import it.unibo.ai.didattica.competition.tablut.engine.UndoInfo;
 
 /**
@@ -173,8 +173,7 @@ public class Mcts implements MoveSearcher {
 	static final class Control {
 		final Node root;
 		final FastState rootPos;
-		final long[] rootHist;
-		final int rootHistLen;
+		final PositionHistory rootHist;
 		final long deadlineNanos;
 		final long maxSims;
 		final long maxNodes;
@@ -184,11 +183,10 @@ public class Mcts implements MoveSearcher {
 		final AtomicLong simsStarted = new AtomicLong();
 		final AtomicLong simsDone = new AtomicLong();
 
-		Control(Node root, FastState rootPos, long[] rootHist, int rootHistLen, long deadlineNanos, long maxSims, long maxNodes) {
+		Control(Node root, FastState rootPos, PositionHistory rootHist, long deadlineNanos, long maxSims, long maxNodes) {
 			this.root = root;
 			this.rootPos = rootPos;
 			this.rootHist = rootHist;
-			this.rootHistLen = rootHistLen;
 			this.deadlineNanos = deadlineNanos;
 			this.maxSims = maxSims;
 			this.maxNodes = maxNodes;
@@ -203,7 +201,8 @@ public class Mcts implements MoveSearcher {
 		UndoInfo[] undo;
 		Node[] pNode;
 		int[] pEdge;
-		long[] hist = new long[64];
+		/** Storia di ripetizione del percorso: chiavi ESATTE, {@link PositionHistory#LONGS_PER_POSITION} long per posizione. */
+		long[] hist = new long[64 * PositionHistory.LONGS_PER_POSITION];
 		int histLen;
 		int histBase;
 		long evals, cacheHits, sims, aborts;
@@ -234,9 +233,11 @@ public class Mcts implements MoveSearcher {
 			}
 		}
 
+		/** @param n numero di POSIZIONI che la storia deve poter contenere */
 		void ensureHist(int n) {
-			if (n > hist.length) {
-				hist = Arrays.copyOf(hist, Math.max(n, hist.length * 2));
+			final int need = n * PositionHistory.LONGS_PER_POSITION;
+			if (need > hist.length) {
+				hist = Arrays.copyOf(hist, Math.max(need, hist.length * 2));
 			}
 		}
 
@@ -270,7 +271,7 @@ public class Mcts implements MoveSearcher {
 	// albero riutilizzabile
 	private Node root;
 	private FastState rootPos;
-	private long[] rootHist;
+	private PositionHistory rootHist;
 	private final AtomicLong nodeCount = new AtomicLong();
 
 	// statistiche dell'ultima ricerca
@@ -441,35 +442,30 @@ public class Mcts implements MoveSearcher {
 	// ------------------------------------------------------------------------------------------ API di confine
 
 	/** Forma di comodo per uno {@link State} del dominio: converte la radice in {@link FastState} e la mossa in {@link Action}. */
-	public Action findBestMove(State rootState, long timeBudgetMillis, List<Long> historySinceLastCapture) {
-		final int n = historySinceLastCapture.size();
-		final long[] h = new long[n];
-		for (int i = 0; i < n; i++) {
-			h[i] = historySinceLastCapture.get(i);
-		}
-		final int mv = findBestMove(FastState.fromState(rootState), timeBudgetMillis, h, n);
+	public Action findBestMove(State rootState, long timeBudgetMillis, PositionHistory historySinceLastCapture) {
+		final int mv = findBestMove(FastState.fromState(rootState), timeBudgetMillis, historySinceLastCapture);
 		return mv == Move.NONE ? null : Move.toAction(mv, rootState.getTurn());
 	}
 
 	public Action findBestMove(State rootState, long timeBudgetMillis) {
-		return findBestMove(rootState, timeBudgetMillis, Collections.<Long>emptyList());
+		return findBestMove(rootState, timeBudgetMillis, PositionHistory.empty());
 	}
 
 	/**
 	 * La ricerca. {@code rootState} non viene modificata. La storia e' quella del contratto di {@link MoveSearcher}; se e' vuota, o non finisce con
-	 * l'hash della radice, la radice viene aggiunta (cosi' un cammino che torna alla radice e' riconosciuto come ripetizione).
+	 * la posizione della radice, la radice viene aggiunta (cosi' un cammino che torna alla radice e' riconosciuto come ripetizione).
 	 *
 	 * @return la mossa ({@link Move}), oppure {@link Move#NONE} se la partita e' finita o chi deve muovere non ha mosse legali
 	 */
 	@Override
-	public int findBestMove(FastState rootState, long timeBudgetMillis, long[] history, int historyLen) {
+	public int findBestMove(FastState rootState, long timeBudgetMillis, PositionHistory history) {
 		final long t0 = System.nanoTime();
 		resetStats();
 		if (rootState.winner != FastState.WINNER_NONE) {
 			clearTree();
 			return Move.NONE;
 		}
-		final long[] h = normalizeHistory(rootState, history, historyLen);
+		final PositionHistory h = normalizeHistory(rootState, history);
 		final Worker w0 = worker(0);
 		w0.resetCounters();
 		Node r = null;
@@ -512,7 +508,7 @@ public class Mcts implements MoveSearcher {
 
 		final long budget = Math.max(MIN_SEARCH_MILLIS, timeBudgetMillis - safetyMarginMillis);
 		final long maxNodes = cfg.maxNodes > 0 ? cfg.maxNodes : autoMaxNodes(Runtime.getRuntime().maxMemory());
-		final Control c = new Control(r, rootState.duplicate(), h, h.length, t0 + budget * 1_000_000L, maxSims, maxNodes);
+		final Control c = new Control(r, rootState.duplicate(), h, t0 + budget * 1_000_000L, maxSims, maxNodes);
 
 		if (r.nMoves > 1 && !r.solved()) {
 			runSearch(c);
@@ -561,20 +557,17 @@ public class Mcts implements MoveSearcher {
 	}
 
 	/** Storia con la radice come ultima voce (la aggiunge se manca). */
-	private static long[] normalizeHistory(FastState rootState, long[] history, int historyLen) {
-		final int n = Math.max(0, Math.min(historyLen, history.length));
-		if (n > 0 && history[n - 1] == rootState.zobristHash) {
-			return Arrays.copyOf(history, n);
+	private static PositionHistory normalizeHistory(FastState rootState, PositionHistory history) {
+		final PositionHistory h = history.copy(); // copia: la storia del chiamante non si modifica
+		if (!h.endsWith(rootState)) {
+			h.add(rootState);
 		}
-		final long[] h = Arrays.copyOf(history, n + 1);
-		h[n] = rootState.zobristHash;
 		return h;
 	}
 
-	private void loadHistory(Worker w, long[] h) {
-		w.ensureHist(h.length + 8);
-		System.arraycopy(h, 0, w.hist, 0, h.length);
-		w.histLen = h.length;
+	private void loadHistory(Worker w, PositionHistory h) {
+		w.ensureHist(h.size() + 8);
+		w.histLen = h.copyKeysTo(w.hist, 0);
 		w.histBase = 0;
 	}
 
@@ -700,7 +693,7 @@ public class Mcts implements MoveSearcher {
 	boolean simulate(Worker w, Control c) {
 		final FastState st = w.st;
 		st.copyFrom(c.rootPos);
-		w.histLen = c.rootHistLen;
+		w.histLen = c.rootHist.size();
 		w.histBase = 0;
 		Node node = c.root;
 		int d = 0;
@@ -766,7 +759,7 @@ public class Mcts implements MoveSearcher {
 				w.histBase = w.histLen; // una cattura azzera la memoria delle posizioni
 			}
 			w.ensureHist(w.histLen + 2);
-			w.hist[w.histLen++] = st.zobristHash;
+			pushHistory(w, st);
 			if (kind == K_DESCEND) {
 				node = next;
 				continue;
@@ -970,7 +963,7 @@ public class Mcts implements MoveSearcher {
 					l = (byte) (moverWins ? 1 : -1);
 					h = l;
 				}
-			} else if (!u.wasCapture() && historyContains(w, st.zobristHash)) {
+			} else if (!u.wasCapture() && historyContains(w, st)) {
 				v = 0;
 				l = 0;
 				h = 0;
@@ -1042,10 +1035,21 @@ public class Mcts implements MoveSearcher {
 		return false;
 	}
 
-	private boolean historyContains(Worker w, long key) {
+	/** Accoda la posizione di {@code st} (chiave ESATTA) alla storia del percorso del worker; la capacita' va garantita da {@code ensureHist}. */
+	private static void pushHistory(Worker w, FastState st) {
+		final int o = w.histLen * PositionHistory.LONGS_PER_POSITION;
+		w.hist[o] = st.key0;
+		w.hist[o + 1] = st.key1;
+		w.hist[o + 2] = st.key2;
+		w.histLen++;
+	}
+
+	/** Vero se la posizione di {@code st} e' gia' nel segmento di storia del worker (dall'ultima cattura): confronto ESATTO, mai per hash. */
+	private boolean historyContains(Worker w, FastState st) {
 		final long[] h = w.hist;
-		for (int i = w.histBase; i < w.histLen; i++) {
-			if (h[i] == key) {
+		final long k0 = st.key0, k1 = st.key1, k2 = st.key2;
+		for (int i = w.histBase, o = w.histBase * PositionHistory.LONGS_PER_POSITION; i < w.histLen; i++, o += PositionHistory.LONGS_PER_POSITION) {
+			if (h[o] == k0 && h[o + 1] == k1 && h[o + 2] == k2) {
 				return true;
 			}
 		}
@@ -1252,18 +1256,18 @@ public class Mcts implements MoveSearcher {
 	 * coincidono sia la posizione sia la STORIA di ripetizione: i pareggi per ripetizione dei suoi archi sono stati calcolati con la storia
 	 * del cammino che ha portato a quel nodo, che deve essere esattamente quella che ora ci viene passata.
 	 */
-	private Node findReusable(FastState newPos, long[] newHist) {
+	private Node findReusable(FastState newPos, PositionHistory newHist) {
 		if (root == null || rootPos == null || rootHist == null) {
 			return null;
 		}
 		final FastState pos = rootPos.duplicate();
-		if (pos.samePosition(newPos) && Arrays.equals(rootHist, newHist)) {
+		if (pos.samePosition(newPos) && rootHist.equals(newHist)) {
 			return root;
 		}
 		return dfsReuse(root, pos, rootHist, 0, newPos, newHist, new UndoInfo());
 	}
 
-	private Node dfsReuse(Node n, FastState pos, long[] hist, int depth, FastState target, long[] targetHist, UndoInfo u) {
+	private Node dfsReuse(Node n, FastState pos, PositionHistory hist, int depth, FastState target, PositionHistory targetHist, UndoInfo u) {
 		if (depth >= REUSE_MAX_DEPTH) {
 			return null;
 		}
@@ -1274,15 +1278,16 @@ public class Mcts implements MoveSearcher {
 			}
 			pos.makeMove(n.moves[e], u);
 			final boolean capture = u.wasCapture();
-			final long[] h2;
+			final PositionHistory h2;
 			if (capture) {
-				h2 = new long[] { pos.zobristHash };
+				h2 = new PositionHistory(1);
+				h2.add(pos);
 			} else {
-				h2 = Arrays.copyOf(hist, hist.length + 1);
-				h2[hist.length] = pos.zobristHash;
+				h2 = hist.copy();
+				h2.add(pos);
 			}
 			Node found = null;
-			if (pos.samePosition(target) && Arrays.equals(h2, targetHist)) {
+			if (pos.samePosition(target) && h2.equals(targetHist)) {
 				found = ch;
 			} else {
 				found = dfsReuse(ch, pos, h2, depth + 1, target, targetHist, new UndoInfo());
@@ -1323,7 +1328,7 @@ public class Mcts implements MoveSearcher {
 		return rootPos;
 	}
 
-	long[] rootHistory() {
+	PositionHistory rootHistory() {
 		return rootHist;
 	}
 

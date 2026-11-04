@@ -11,6 +11,7 @@ import it.unibo.ai.didattica.competition.tablut.aiplayer.SimpleEvaluator;
 import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 import it.unibo.ai.didattica.competition.tablut.engine.Move;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 
 import java.lang.reflect.Field;
 
@@ -84,7 +85,7 @@ public class NegamaxClientArgsCheck {
 			check(((Mcts) TablutNegamaxClient.buildSearcher("mcts", "maxnodes=1234", ev, 1, 0, Negamax.ORDER_DEFAULT, 12, false)).config().maxNodes == 1234,
 					"mcts: tetto nodi esplicito rispettato");
 			final FastState root = FastState.fromState(new StateTablut());
-			final int mv = m.setThreads(1).setSafetyMarginMillis(0).findBestMove(root, 150, new long[] { root.zobristHash }, 1);
+			final int mv = m.setThreads(1).setSafetyMarginMillis(0).findBestMove(root, 150, PositionHistory.of(root));
 			check(mv != Move.NONE && m.lastSims > 0, "mcts dal client: restituisce una mossa dopo aver simulato");
 			m.shutdown();
 		}

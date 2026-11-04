@@ -1,12 +1,11 @@
 package it.unibo.ai.didattica.competition.tablut.aiplayer;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 import it.unibo.ai.didattica.competition.tablut.domain.Action;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 
 /**
  * COPIA CONGELATA del motore di ricerca storico (prima della migrazione a {@code FastState}): Negamax alpha-beta con
@@ -149,24 +148,24 @@ public class LegacyNegamax {
 	 * "storia reale" tra chiamate diverse).
 	 */
 	public Action findBestMove(State rootState, long timeBudgetMillis) {
-		return findBestMove(rootState, timeBudgetMillis, Collections.emptyList());
+		return findBestMove(rootState, timeBudgetMillis, PositionHistory.empty());
 	}
 
 	/**
 	 * Trova la migliore mossa per il giocatore di turno in {@code rootState},
 	 * usando al massimo {@code timeBudgetMillis} millisecondi.
 	 *
-	 * @param historySinceLastCapture hash Zobrist ({@link ZobristHasher}) delle
-	 *        posizioni REALMENTE occorse in partita dall'ultima cattura (radice
-	 *        inclusa), piu' vecchia per prima. Il chiamante (tipicamente
-	 *        {@code TablutNegamaxClient}) la mantiene aggiornata; qui viene
-	 *        copiata, mai modificata.
+	 * @param historySinceLastCapture le posizioni REALMENTE occorse in partita
+	 *        dall'ultima cattura (radice inclusa), piu' vecchia per prima, come
+	 *        chiavi ESATTE ({@link PositionHistory}: nessuna collisione possibile).
+	 *        Il chiamante (tipicamente {@code TablutNegamaxClient}) la mantiene
+	 *        aggiornata; qui viene copiata, mai modificata.
 	 * @return la miglior mossa trovata, oppure {@code null} se in {@code rootState}
 	 *         il giocatore di turno non ha mosse legali (situazione che, di norma,
 	 *         il chiamante non dovrebbe nemmeno raggiungere: se non si hanno mosse
 	 *         legali si e' gia' perso).
 	 */
-	public Action findBestMove(State rootState, long timeBudgetMillis, List<Long> historySinceLastCapture) {
+	public Action findBestMove(State rootState, long timeBudgetMillis, PositionHistory historySinceLastCapture) {
 		this.deadline = System.currentTimeMillis() + Math.max(50, timeBudgetMillis - SAFETY_MARGIN_MILLIS);
 		return searchRoot(rootState, historySinceLastCapture);
 	}
@@ -174,7 +173,7 @@ public class LegacyNegamax {
 	/**
 	 * Iterative deepening alla radice. Usa {@link #deadline} gia' impostato dal chiamante e lascia i risultati nei campi {@code last*}.
 	 */
-	Action searchRoot(State rootState, List<Long> historySinceLastCapture) {
+	Action searchRoot(State rootState, PositionHistory historySinceLastCapture) {
 		this.timeUp = false;
 		this.nodeCounter = 0;
 		this.repetitionEventCounter = 0;
@@ -201,7 +200,7 @@ public class LegacyNegamax {
 		// Copia difensiva e mutabile: la ricerca vi aggiunge/rimuove le proprie
 		// posizioni ipotetiche (avanti prima di ricorrere, indietro dopo il
 		// ritorno), ma non deve mai alterare la lista del chiamante.
-		List<Long> history = new ArrayList<>(historySinceLastCapture);
+		PositionHistory history = historySinceLastCapture.copy();
 
 		Action best = rootMoves.get(0);
 		double bestScore = 0;
@@ -281,19 +280,20 @@ public class LegacyNegamax {
 	// legale", invece di dover dedurle indirettamente da quale mossa sceglie
 	// una ricerca completa.
 	double exploreChild(State parent, State child, Action a, int depth, double alpha, double beta,
-			int perspective, long childHash, List<Long> history) {
+			int perspective, long childHash, PositionHistory history) {
+		// la storia di ripetizione usa la chiave ESATTA della posizione (childHash serve solo alla TT): niente scambi per collisione
 		if (AshtonRules.wasCapture(parent, child, a)) {
-			List<Long> freshHistory = new ArrayList<>();
-			freshHistory.add(childHash);
+			PositionHistory freshHistory = new PositionHistory();
+			freshHistory.add(child);
 			return negamax(child, depth, alpha, beta, perspective, childHash, freshHistory);
 		}
-		if (history.contains(childHash)) {
+		if (history.contains(child)) {
 			repetitionEventCounter++;
 			return 0; // seconda occorrenza della stessa posizione dall'ultima cattura: pareggio
 		}
-		history.add(childHash);
+		history.add(child);
 		double score = negamax(child, depth, alpha, beta, perspective, childHash, history);
-		history.remove(history.size() - 1); // backtrack: non deve restare visibile ai fratelli successivi
+		history.removeLast(); // backtrack: non deve restare visibile ai fratelli successivi
 		return score;
 	}
 
@@ -311,7 +311,7 @@ public class LegacyNegamax {
 	 */
 	// package-private per lo stesso motivo di exploreChild, si veda sopra.
 	double negamax(State state, int depth, double alpha, double beta, int perspective, long hash,
-			List<Long> history) {
+			PositionHistory history) {
 		nodeCounter++;
 		if ((nodeCounter & (TIME_CHECK_INTERVAL - 1)) == 0 && checkTimeUp()) {
 			return 0; // valore ignorato dal chiamante: appena timeUp==true, la iterazione corrente viene scartata

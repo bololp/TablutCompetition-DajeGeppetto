@@ -2,8 +2,6 @@ package it.unibo.ai.didattica.competition.tablut.client;
 
 import java.io.IOException;
 import java.net.UnknownHostException;
-import java.util.ArrayList;
-import java.util.List;
 
 import it.unibo.ai.didattica.competition.tablut.aiplayer.CachingEvaluator;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Evaluator;
@@ -22,6 +20,7 @@ import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 import it.unibo.ai.didattica.competition.tablut.engine.Move;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 
 /**
  * Client che gioca usando una ricerca invece di mosse casuali: Negamax + alpha-beta (default) oppure Monte Carlo Tree Search
@@ -46,7 +45,7 @@ public class TablutNegamaxClient extends TablutClient {
 	static final int DEFAULT_EVAL_CACHE_LOG2 = 22;
 
 	/** Se {@link #main} usa la chiave esatta (TT e cache) quando non c'e' {@code exactkey=}: no, come prima. */
-	static final boolean DEFAULT_EXACT_KEY = true;
+	static final boolean DEFAULT_EXACT_KEY = false;
 
 	/** Timeout (in secondi) dichiarato dal server/arbitro per ogni mossa. */
 	private final int timeoutSeconds;
@@ -59,7 +58,8 @@ public class TablutNegamaxClient extends TablutClient {
 	// cattura e' pareggio"). Aggiornata ad ogni stato osservato dal server,
 	// azzerata ad ogni cattura (nessuna posizione precedente puo' piu'
 	// ripresentarsi una volta sparita una pedina).
-	private final List<Long> historySinceLastCapture = new ArrayList<>();
+	/** Posizioni realmente occorse dall'ultima cattura (chiavi ESATTE, non hash): la storia per la regola di ripetizione. */
+	private final PositionHistory historySinceLastCapture = new PositionHistory();
 	private int lastObservedPieceCount = -1;
 
 	/** Costruttore "storico": nessun file di pesi -> usa SimpleEvaluator. */
@@ -379,12 +379,7 @@ public class TablutNegamaxClient extends TablutClient {
 				long budgetMillis = this.timeoutSeconds * 1000L;
 				long start = System.currentTimeMillis();
 
-				final int histLen = this.historySinceLastCapture.size();
-				final long[] history = new long[histLen];
-				for (int i = 0; i < histLen; i++) {
-					history[i] = this.historySinceLastCapture.get(i);
-				}
-				int move = this.searcher.findBestMove(position, budgetMillis, history, histLen);
+				int move = this.searcher.findBestMove(position, budgetMillis, this.historySinceLastCapture);
 				Action chosen = move == Move.NONE ? null : Move.toAction(move, turn);
 
 				long elapsed = System.currentTimeMillis() - start;
@@ -436,7 +431,7 @@ public class TablutNegamaxClient extends TablutClient {
 		if (lastObservedPieceCount >= 0 && pieceCount < lastObservedPieceCount) {
 			historySinceLastCapture.clear();
 		}
-		historySinceLastCapture.add(position.zobristHash);
+		historySinceLastCapture.add(position);
 		lastObservedPieceCount = pieceCount;
 	}
 }

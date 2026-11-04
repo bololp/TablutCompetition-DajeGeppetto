@@ -1,13 +1,12 @@
 package it.unibo.ai.didattica.competition.tablut.training;
 
-import java.util.ArrayList;
-import java.util.List;
 
 import it.unibo.ai.didattica.competition.tablut.aiplayer.AshtonRules;
 import it.unibo.ai.didattica.competition.tablut.domain.Action;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 
 /**
  * Regole di FINE PARTITA per il self-play, coerenti con la ricerca ({@code Negamax}) e con la regola ufficiale. Prima di
@@ -55,19 +54,20 @@ public final class GameTracker {
 		}
 	}
 
-	private final List<Long> history = new ArrayList<>();
+	/** Posizioni dall'ultima cattura come chiavi ESATTE: la regola di ripetizione non puo' essere ingannata da una collisione di hash. */
+	private final PositionHistory history = new PositionHistory();
 	private boolean repetitionDraw;
 
 	/** @param initial posizione di partenza (viene inserita nella storia) */
 	public GameTracker(State initial) {
-		history.add(FastState.hashOf(initial));
+		history.add(initial);
 	}
 
 	/**
-	 * Hash delle posizioni dall'ultima cattura, compresa la corrente: va passata a
-	 * {@code Negamax.findBestMove(stato, tempo, storia)}. E' la lista VIVA del tracker (la ricerca ne fa una copia).
+	 * Le posizioni dall'ultima cattura, compresa la corrente, come chiavi esatte: va passata a
+	 * {@code Negamax.findBestMove(stato, tempo, storia)}. E' la storia VIVA del tracker (la ricerca ne fa una copia).
 	 */
-	public List<Long> history() {
+	public PositionHistory history() {
 		return history;
 	}
 
@@ -86,14 +86,14 @@ public final class GameTracker {
 		if (AshtonRules.isTerminal(next)) {
 			return next;
 		}
-		long h = FastState.hashOf(next);
+		final FastState nextPosition = FastState.fromState(next);
 		if (AshtonRules.wasCapture(state, next, move)) {
 			history.clear();
-			history.add(h);
-		} else if (history.contains(h)) {
+			history.add(nextPosition);
+		} else if (history.contains(nextPosition)) {
 			repetitionDraw = true;
 		} else {
-			history.add(h);
+			history.add(nextPosition);
 		}
 		return next;
 	}

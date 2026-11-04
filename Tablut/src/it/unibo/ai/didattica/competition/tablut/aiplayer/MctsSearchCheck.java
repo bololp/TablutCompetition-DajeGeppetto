@@ -14,6 +14,7 @@ import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
 import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
 import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 import it.unibo.ai.didattica.competition.tablut.engine.Move;
 import it.unibo.ai.didattica.competition.tablut.engine.UndoInfo;
 import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
@@ -85,7 +86,7 @@ public class MctsSearchCheck {
 	/** Ricerca deterministica a numero di simulazioni fisso (1 thread, radice con la sola storia di se stessa). */
 	static int search(Mcts m, FastState s, long sims) {
 		m.setMaxSims(sims);
-		return m.findBestMove(s, 600000, rootOnly(s), 1);
+		return m.findBestMove(s, 600000, rootOnly(s));
 	}
 
 	public static void main(String[] args) throws Exception {
@@ -362,13 +363,13 @@ public class MctsSearchCheck {
 		final Mcts m = mk(SIMPLE, "", 1);
 		final FastState st = stalemateWhite();
 		check("(costruzione) il Bianco non ha mosse", legal(st).length == 0 && st.winner == FastState.WINNER_NONE);
-		check("nessuna mossa legale -> NONE, nessun errore", m.findBestMove(st, 1000, rootOnly(st), 1) == Move.NONE && m.lastError == null);
+		check("nessuna mossa legale -> NONE, nessun errore", m.findBestMove(st, 1000, rootOnly(st)) == Move.NONE && m.lastError == null);
 		check("... e nessun albero conservato", m.rootNode() == null);
 
 		final FastState one = singleMove();
 		final int[] l1 = legal(one);
 		check("(costruzione) una sola mossa legale", l1.length == 1);
-		final int mv = m.findBestMove(one, 1000, rootOnly(one), 1);
+		final int mv = m.findBestMove(one, 1000, rootOnly(one));
 		check("una sola mossa: restituita subito senza simulazioni", mv == l1[0] && m.lastSims == 0 && m.lastElapsedMillis < 200);
 
 		// terminale: dopo una mossa vincente
@@ -384,19 +385,23 @@ public class MctsSearchCheck {
 			final FastState term = win.duplicate();
 			term.makeMove(winNowMoves(win)[0], new UndoInfo());
 			check("(costruzione) la posizione dopo la vittoria e' terminale", term.winner != FastState.WINNER_NONE);
-			check("radice terminale -> NONE", m.findBestMove(term, 1000, rootOnly(term), 1) == Move.NONE && m.lastError == null);
+			check("radice terminale -> NONE", m.findBestMove(term, 1000, rootOnly(term)) == Move.NONE && m.lastError == null);
 		}
 
 		// immutabilita' degli ingressi
 		final FastState p = gamePositions(seed + 1, 6, 5).get(3);
 		final FastState before = p.duplicate();
-		final long[] hist = { 11L, 22L, 33L, p.zobristHash };
-		final long[] histCopy = hist.clone();
+		final PositionHistory hist = new PositionHistory();
+		hist.add(11L, 11L, 11L); // voci "estranee": chiavi che non sono quelle di nessuna posizione reale
+		hist.add(22L, 22L, 22L);
+		hist.add(33L, 33L, 33L);
+		hist.add(p);
+		final PositionHistory histCopy = hist.copy();
 		final Mcts m2 = mk(SIMPLE, "", 1);
 		m2.setMaxSims(500);
-		final int mv2 = m2.findBestMove(p, 100000, hist, hist.length);
+		final int mv2 = m2.findBestMove(p, 100000, hist);
 		check("la radice non e' modificata", sameFast(p, before));
-		check("la storia non e' modificata", Arrays.equals(hist, histCopy));
+		check("la storia non e' modificata", hist.equals(histCopy));
 		check("la mossa e' legale", contains(legal(p), mv2));
 
 		// API a Action
@@ -647,7 +652,7 @@ public class MctsSearchCheck {
 				child.child[j] = Mcts.EXPANDING;
 			}
 			final Mcts.Worker w = m.new Worker(8);
-			final Mcts.Control ctl = new Mcts.Control(r, p.duplicate(), new long[] { p.zobristHash }, 1, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE);
+			final Mcts.Control ctl = new Mcts.Control(r, p.duplicate(), PositionHistory.of(p), Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE);
 			final boolean done = m.simulate(w, ctl);
 			tested++;
 			if (done || r.vloss[e] != 0 || r.totalVloss != 0 || child.totalVloss != 0) {
@@ -728,7 +733,7 @@ public class MctsSearchCheck {
 		final Mcts m = mk(SIMPLE, "expand=0,reuse=false", 1);
 		final Mcts.Node root = handNode(new int[] { 0, 0, 0 }, new float[] { 0.1f, 0.2f, 0.3f }, null, new int[] { 100, 100, 100 });
 		// tutti gli slot (5) sono stati assegnati, ma solo 3 simulazioni sono completate: 2 sono "in volo" e potrebbero ancora annullarsi e riprovare
-		final Mcts.Control c = new Mcts.Control(root, p.duplicate(), new long[] { p.zobristHash }, 1, System.nanoTime() + 20_000_000_000L, 5, Long.MAX_VALUE);
+		final Mcts.Control c = new Mcts.Control(root, p.duplicate(), PositionHistory.of(p), System.nanoTime() + 20_000_000_000L, 5, Long.MAX_VALUE);
 		c.simsStarted.set(5);
 		c.simsDone.set(3);
 		final Mcts.Worker w = m.new Worker(8);
@@ -748,7 +753,7 @@ public class MctsSearchCheck {
 		check("nessuna simulazione e' stata eseguita da questo worker (i slot erano di altri)", w.sims == 0 && c.simsStarted.get() == 5);
 
 		// scadenza: con simulazioni ancora "in volo" ma il tempo finito, il worker non resta in attesa all'infinito
-		final Mcts.Control late = new Mcts.Control(root, p.duplicate(), new long[] { p.zobristHash }, 1, System.nanoTime() - 1_000_000L, 5, Long.MAX_VALUE);
+		final Mcts.Control late = new Mcts.Control(root, p.duplicate(), PositionHistory.of(p), System.nanoTime() - 1_000_000L, 5, Long.MAX_VALUE);
 		late.simsStarted.set(5);
 		late.simsDone.set(3);
 		final Thread t2 = new Thread() {
@@ -868,13 +873,15 @@ public class MctsSearchCheck {
 			final Mcts h1 = mk(SIMPLE, "expand=1", 1), h2 = mk(SIMPLE, "expand=1", 1);
 			h1.setMaxSims(3000);
 			h2.setMaxSims(3000);
-			final long[] full = new long[120]; // 120 voci: la capacita' iniziale di 64 cresce a 128, restano 8 posti oltre la storia: un cammino piu' profondo li supera
+			final PositionHistory full = new PositionHistory(120); // 120 voci: la capacita' iniziale di 64 cresce a 128, restano 8 posti oltre la storia: un cammino piu' profondo li supera
 			for (int i = 0; i < 119; i++) {
-				full[i] = rnd.nextLong();
+				full.add(rnd.nextLong(), rnd.nextLong(), rnd.nextLong()); // chiavi "estranee"
 			}
-			full[119] = p.zobristHash;
-			final int r1 = h1.findBestMove(p, 100000, full, 120);
-			final int r2 = h2.findBestMove(p, 100000, Arrays.copyOf(full, 119), 119);
+			full.add(p);
+			final PositionHistory withoutRoot = full.copy();
+			withoutRoot.removeLast();
+			final int r1 = h1.findBestMove(p, 100000, full);
+			final int r2 = h2.findBestMove(p, 100000, withoutRoot);
 			if (h1.lastMaxDepth > 8) {
 				deepHist++;
 			}
@@ -1296,39 +1303,66 @@ public class MctsSearchCheck {
 		System.out.println("  ciclo: " + Move.toString(m1) + " " + Move.toString(m2) + " " + Move.toString(m3) + " " + Move.toString(m4));
 
 		// (a) radice P3 (Nero di turno) con la storia [P0,P1,P2,P3]: la mossa m4 ricrea P0 -> pareggio esatto alla radice
-		final long[] hist = { p0.zobristHash, p1.zobristHash, p2.zobristHash, p3.zobristHash };
+		final PositionHistory hist = PositionHistory.of(p0, p1, p2, p3);
 		final String[] keys = { key(p0), key(p1), key(p2), key(p3) };
 		final Mcts a = mk(constant(0), "expand=0,mm=0,cache=0", 1);
 		a.setMaxSims(50);
-		a.findBestMove(p3, 100000, hist, 4);
+		a.findBestMove(p3, 100000, hist);
 		final Mcts.Node r = a.rootNode();
 		final int idx = indexOfMove(r, m4);
 		check("(a) la mossa che ricrea P0 e' nel nodo", idx >= 0);
 		check("(a) arco di ripetizione: pareggio esatto (0,0), q=0, nessun figlio", idx >= 0 && r.lo[idx] == 0 && r.hi[idx] == 0 && r.q[idx] == 0f && r.child[idx] == null);
 		final Mcts b = mk(constant(0), "expand=0,mm=0,cache=0", 1);
 		b.setMaxSims(50);
-		b.findBestMove(p3, 100000, new long[] { p3.zobristHash }, 1);
+		b.findBestMove(p3, 100000, PositionHistory.of(p3));
 		final int idxB = indexOfMove(b.rootNode(), m4);
 		check("(a') senza la storia la stessa mossa e' una mossa normale (-1,1)", idxB >= 0 && b.rootNode().lo[idxB] == -1 && b.rootNode().hi[idxB] == 1);
+
+		// (a'') collisione di hash FORZATA: al posto di P0 la storia contiene una posizione DIVERSA con lo stesso hash. Il motore deve trattarla come una
+		// voce qualunque, cioe' come una voce ESTRANEA: l'arco di m4 deve essere identico a quello ottenuto con una voce estranea (che non puo' collidere con
+		// nulla) e NON deve essere il pareggio per ripetizione (0,0) senza figlio che si ottiene con la storia vera. Vale per ognuno dei tre long della
+		// chiave e per il turno.
+		final PositionHistory foreign = new PositionHistory();
+		foreign.add(0x7777L, 0x7777L, 0x7777L);
+		foreign.add(p1);
+		foreign.add(p2);
+		foreign.add(p3);
+		final Mcts ctl = mk(constant(0), "expand=0,mm=0,cache=0", 1);
+		ctl.setMaxSims(50);
+		ctl.findBestMove(p3, 100000, foreign);
+		final int ci = indexOfMove(ctl.rootNode(), m4);
+		check("(a'') controllo: con una voce estranea la mossa m4 non e' una ripetizione", ci >= 0 && !(ctl.rootNode().lo[ci] == 0 && ctl.rootNode().hi[ci] == 0 && ctl.rootNode().child[ci] == null));
+		final FastState[] forgedVariants = collidingVariants(p0);
+		for (int v = 0; v < forgedVariants.length; v++) {
+			final Mcts fa = mk(constant(0), "expand=0,mm=0,cache=0", 1);
+			fa.setMaxSims(50);
+			fa.findBestMove(p3, 100000, PositionHistory.of(forgedVariants[v], p1, p2, p3));
+			final int fi = indexOfMove(fa.rootNode(), m4);
+			final boolean sameAsForeign = fi >= 0 && ci >= 0 && fa.rootNode().lo[fi] == ctl.rootNode().lo[ci] && fa.rootNode().hi[fi] == ctl.rootNode().hi[ci]
+				&& fa.rootNode().q[fi] == ctl.rootNode().q[ci] && (fa.rootNode().child[fi] == null) == (ctl.rootNode().child[ci] == null);
+			final boolean notRepetition = fi >= 0 && !(fa.rootNode().lo[fi] == 0 && fa.rootNode().hi[fi] == 0 && fa.rootNode().child[fi] == null);
+			check("(a'') variante " + v + ": la collisione forzata e' trattata come una voce estranea (arco identico al controllo)", sameAsForeign && forgedVariants[v].zobristHash == p0.zobristHash);
+			check("(a'') variante " + v + ": la collisione forzata NON e' il pareggio per ripetizione", notRepetition);
+		}
 
 		// (b) scelta: chi perde (valutazione costante -> per il Nero +0.9 per il Bianco) preferisce il pareggio; chi vince lo evita
 		// P3 ha il Nero di turno. Valutazione costante C (prospettiva bianca): il Nero vede -C. Con C=+900 il Nero sta perdendo: il pareggio (0) vale piu' di -0.9.
 		final Mcts losing = mk(constant(900), "expand=1,mm=0,cache=0", 1);
 		losing.setMaxSims(3000);
-		final int chosenLosing = losing.findBestMove(p3, 100000, hist, 4);
+		final int chosenLosing = losing.findBestMove(p3, 100000, hist);
 		final Mcts winning = mk(constant(-900), "expand=1,mm=0,cache=0", 1);
 		winning.setMaxSims(3000);
-		final int chosenWinning = winning.findBestMove(p3, 100000, hist, 4);
+		final int chosenWinning = winning.findBestMove(p3, 100000, hist);
 		final boolean noTerminals = winNowMoves(p3).length == 0 && !lossIn2(p3);
 		check("(b) (costruzione) niente terminali vicini a P3", noTerminals);
 		check("(b) il Nero che sta perdendo sceglie il pareggio per ripetizione", chosenLosing == m4);
 		check("(b) il Nero che sta vincendo evita il pareggio per ripetizione", chosenWinning != m4);
 
 		// (c) ripetizione DENTRO l'albero: radice P2 (Bianco), storia [P0,P1,P2]: il ramo m3 porta a P3, dove la mossa m4 ricrea P0 (in storia)
-		final long[] h2 = { p0.zobristHash, p1.zobristHash, p2.zobristHash };
+		final PositionHistory h2 = PositionHistory.of(p0, p1, p2);
 		final Mcts c = mk(constant(0), "expand=0,mm=0,cache=0", 1);
 		c.setMaxSims(4000);
-		c.findBestMove(p2, 100000, h2, 3);
+		c.findBestMove(p2, 100000, h2);
 		final Mcts.Node rc = c.rootNode();
 		final int e3 = indexOfMove(rc, m3);
 		final Mcts.Node n3 = e3 >= 0 ? rc.child[e3] : null;
@@ -1336,6 +1370,17 @@ public class MctsSearchCheck {
 		if (n3 != null) {
 			final int e4 = indexOfMove(n3, m4);
 			check("(c) dentro l'albero la mossa m4 e' un pareggio esatto per ripetizione", e4 >= 0 && n3.lo[e4] == 0 && n3.hi[e4] == 0 && n3.child[e4] == null);
+			// (c'') stessa situazione con una collisione di hash forzata al posto di P0: dentro l'albero NON e' una ripetizione
+			for (int v = 0; v < forgedVariants.length; v++) {
+				final Mcts cf = mk(constant(0), "expand=0,mm=0,cache=0", 1);
+				cf.setMaxSims(4000);
+				cf.findBestMove(p2, 100000, PositionHistory.of(forgedVariants[v], p1, p2));
+				final int fe3 = indexOfMove(cf.rootNode(), m3);
+				final Mcts.Node fn3 = fe3 >= 0 ? cf.rootNode().child[fe3] : null;
+				final int fe4 = indexOfMove(fn3, m4);
+				check("(c'') variante " + v + ": dentro l'albero la collisione forzata NON e' una ripetizione",
+					fn3 != null && fe4 >= 0 && !(fn3.lo[fe4] == 0 && fn3.hi[fe4] == 0 && fn3.child[fe4] == null));
+			}
 		}
 		final Walk w = new Walk(c, constant(0), true, 0);
 		final String err = w.run(rc, p2, new String[] { key(p0), key(p1), key(p2) });
@@ -1344,7 +1389,7 @@ public class MctsSearchCheck {
 		// (d) senza la storia (solo la radice) il ramo non e' una ripetizione
 		final Mcts d = mk(constant(0), "expand=0,mm=0,cache=0", 1);
 		d.setMaxSims(4000);
-		d.findBestMove(p2, 100000, new long[] { p2.zobristHash }, 1);
+		d.findBestMove(p2, 100000, PositionHistory.of(p2));
 		final Mcts.Node rd = d.rootNode();
 		final int d3 = indexOfMove(rd, m3);
 		final Mcts.Node nd3 = d3 >= 0 ? rd.child[d3] : null;
@@ -1358,18 +1403,16 @@ public class MctsSearchCheck {
 		for (int g = 0; g < 10; g++) {
 			final TestPositions.Game game = TestPositions.playGame(rnd, g % 2 == 0, 200);
 			for (int i = 5; i < game.positions.size(); i += 17) {
-				final List<Long> hl = game.histories.get(i);
+				final PositionHistory hl = game.histories.get(i);
 				final int L = hl.size();
-				final long[] hh = new long[L];
 				final String[] kk = new String[L];
 				for (int j = 0; j < L; j++) {
-					hh[j] = hl.get(j);
 					kk[j] = key(FastState.fromState(game.positions.get(i - (L - 1) + j)));
 				}
 				final FastState rootPos = FastState.fromState(game.positions.get(i));
 				final Mcts m = mk(SIMPLE, "expand=0", 1);
 				m.setMaxSims(500);
-				m.findBestMove(rootPos, 100000, hh, L);
+				m.findBestMove(rootPos, 100000, hl);
 				runs++;
 				if (m.rootNode() == null) {
 					continue;
@@ -1436,8 +1479,8 @@ public class MctsSearchCheck {
 		final Negamax n1 = new Negamax(SIMPLE, 4).setThreads(1);
 		final Negamax n2 = new Negamax(SIMPLE, 4).setThreads(1);
 		final NegamaxSearcher ad = new NegamaxSearcher(n2);
-		final int direct = n1.findBestMove(p, 100000, rootOnly(p), 1);
-		final int viaAdapter = ad.findBestMove(p, 100000, rootOnly(p), 1);
+		final int direct = n1.findBestMove(p, 100000, rootOnly(p));
+		final int viaAdapter = ad.findBestMove(p, 100000, rootOnly(p));
 		check("stessa mossa dell'algoritmo sottostante (ricerca a profondita' fissa, 1 thread)", direct == viaAdapter || n1.lastScore == n2.lastScore);
 		check("statistiche inoltrate", ad.lastWork() == n2.lastTotalNodeCount && ad.lastDepth() == n2.lastDepthReached && ad.describeLastSearch().contains("profondita'"));
 		check("nome", ad.name().equals("negamax") && ad.negamax() == n2);

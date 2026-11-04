@@ -1,6 +1,5 @@
 package it.unibo.ai.didattica.competition.tablut.experiments;
 
-import java.util.ArrayList;
 import java.util.List;
 
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Evaluator;
@@ -9,6 +8,7 @@ import it.unibo.ai.didattica.competition.tablut.aiplayer.Negamax;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.OrderingSpec;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.SimpleEvaluator;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 
 /**
  * Misura l'effetto della DIMENSIONE e della POLITICA della transposition table a profondita' fissa (deterministico, un thread):
@@ -47,7 +47,7 @@ public class TTBench {
 				Negamax n = new Negamax(ev, depth, true, 1 << log2, true, order, 1, two);
 				for (State s : line) {
 					long t0 = System.nanoTime();
-					n.findBestMove(s, 100_000_000L, new ArrayList<Long>());
+					n.findBestMove(s, 100_000_000L, PositionHistory.empty());
 					nanos += System.nanoTime() - t0;
 					nodes += n.lastNodeCount;
 					scores[k++] = n.lastScore;

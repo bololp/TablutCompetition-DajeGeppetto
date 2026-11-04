@@ -13,6 +13,7 @@ import it.unibo.ai.didattica.competition.tablut.domain.Action;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
 import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 
 /**
  * Misura la velocita' della ricerca. Usa SOLO l'API pubblica con {@code State}/{@code Action} (che esiste identica prima e
@@ -61,7 +62,7 @@ public class SearchSpeedBench {
 		int n = quick ? Math.min(positions.size(), 6) : positions.size();
 		for (int i = 0; i < n; i++) {
 			Negamax nm = new Negamax(ev, depth, true, 1 << 20).setThreads(1);
-			nm.findBestMove(positions.get(i), 100_000_000L, new ArrayList<Long>());
+			nm.findBestMove(positions.get(i), 100_000_000L, PositionHistory.empty());
 			r.nodes += nm.lastNodeCount;
 		}
 		r.seconds = (System.nanoTime() - t0) / 1e9;
@@ -79,7 +80,7 @@ public class SearchSpeedBench {
 		for (int i = 0; i < n; i++) {
 			Negamax nm = new Negamax(ev, 40, true, 1 << 20).setThreads(1);
 			long t0 = System.nanoTime();
-			nm.findBestMove(positions.get(i), budgetMs + 300, new ArrayList<Long>()); // +300: il margine di sicurezza del motore
+			nm.findBestMove(positions.get(i), budgetMs + 300, PositionHistory.empty()); // +300: il margine di sicurezza del motore
 			ms += (System.nanoTime() - t0) / 1_000_000;
 			nodes += nm.lastNodeCount;
 			sumDepth += nm.lastDepthReached;

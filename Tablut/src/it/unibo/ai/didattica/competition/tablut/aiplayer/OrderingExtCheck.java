@@ -15,6 +15,7 @@ import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
 import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 import it.unibo.ai.didattica.competition.tablut.engine.Move;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 
 /**
  * Verifica le opzioni di ordinamento ESTESE di {@link Negamax} ({@link Negamax#ORDER_WINS}, {@code ORDER_CAPTURES},
@@ -230,7 +231,7 @@ public class OrderingExtCheck {
 							continue;
 						}
 						Negamax n = new Negamax(new SimpleEvaluator(), 6, false, 0, true, mode).setThreads(1);
-						n.installForTest(FastState.fromState(c), new ArrayList<Long>(), 4);
+						n.installForTest(FastState.fromState(c), PositionHistory.empty(), 4);
 						final int ply = 1 + rnd.nextInt(4);
 						int[] mv = new int[cnt];
 						int[] tv = new int[cnt];
@@ -632,7 +633,7 @@ public class OrderingExtCheck {
 							}
 						}
 					}
-					n.installForTest(FastState.fromState(root), new ArrayList<Long>(), 1);
+					n.installForTest(FastState.fromState(root), PositionHistory.empty(), 1);
 					n.prevMoveAt[0] = rnd.nextInt(3) == 0 ? -1 : rnd.nextInt(6561);
 					n.negamax(1, -SearchOptimizationsCheck.INF, SearchOptimizationsCheck.INF, side == 0 ? 1 : -1, 0);
 					checks++;
@@ -674,7 +675,7 @@ public class OrderingExtCheck {
 				}
 				// la mossa deve valere il valore di radice (ottima), anche se il tie-break e' cambiato
 				if (m != null) {
-					double v = SearchOptimizationsCheck.exactValueOfMove(ev, s, m, cand.lastDepthReached, new ArrayList<Long>());
+					double v = SearchOptimizationsCheck.exactValueOfMove(ev, s, m, cand.lastDepthReached, PositionHistory.empty());
 					if (Math.abs(v - cand.lastScore) > 1e-9 && Math.abs(cand.lastScore - fresh.lastScore) <= 1e-9) {
 						fail(cfg.name + " [istanza riusata]: la mossa scelta vale " + v + " ma il valore di radice e' " + cand.lastScore);
 					}

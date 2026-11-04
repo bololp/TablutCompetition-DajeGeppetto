@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicLongArray;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
 
 /**
@@ -255,8 +256,8 @@ public class CachingEvaluatorCheck {
 			int n = 0;
 			for (int i = 0; i < 400 && n < 8; i += 37, n++) {
 				FastState root = pos.get(i);
-				int m1 = plain.findBestMove(root, 1_000_000_000L, new long[0], 0);
-				int m2 = cached.findBestMove(root, 1_000_000_000L, new long[0], 0);
+				int m1 = plain.findBestMove(root, 1_000_000_000L, PositionHistory.empty());
+				int m2 = cached.findBestMove(root, 1_000_000_000L, PositionHistory.empty());
 				check(m1 == m2, name + "/" + oname[o] + ": mossa diversa alla posizione " + i);
 				check(same(plain.lastScore, cached.lastScore), name + "/" + oname[o] + ": punteggio diverso alla posizione " + i + " (" + plain.lastScore + " vs " + cached.lastScore + ")");
 				check(plain.lastNodeCount == cached.lastNodeCount, name + "/" + oname[o] + ": nodi diversi alla posizione " + i);
@@ -385,7 +386,7 @@ public class CachingEvaluatorCheck {
 		for (int i = 0; i < 3; i++) {
 			FastState root = pos.get(10 + i * 31);
 			int n = root.generateMoves(buf);
-			int mv = smp.findBestMove(root, 400, new long[0], 0);
+			int mv = smp.findBestMove(root, 400, PositionHistory.empty());
 			boolean legal = false;
 			for (int k = 0; k < n; k++) {
 				legal |= buf[k] == mv;

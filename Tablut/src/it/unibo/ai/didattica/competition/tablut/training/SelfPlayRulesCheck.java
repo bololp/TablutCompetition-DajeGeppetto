@@ -11,12 +11,13 @@ import it.unibo.ai.didattica.competition.tablut.aiplayer.MLP;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.NeuralEvaluator;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.SimpleEvaluator;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.TablutFeatures;
-import it.unibo.ai.didattica.competition.tablut.aiplayer.ZobristHasher;
 import it.unibo.ai.didattica.competition.tablut.domain.Action;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Pawn;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
 import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
 
 /**
  * Collauda le regole di fine partita del self-play ({@link GameTracker}, {@link SelfPlayTrainer#playGame}):
@@ -207,8 +208,8 @@ public class SelfPlayRulesCheck {
 				if (legal.isEmpty()) {
 					break;
 				}
-				// contratto con la ricerca: la storia contiene gli hash dall'ultima cattura, posizione corrente compresa
-				List<Long> expectedHashes = expectedHistory(states);
+				// contratto con la ricerca: la storia contiene le chiavi esatte dall'ultima cattura, posizione corrente compresa
+				PositionHistory expectedHashes = expectedHistory(states);
 				if (!tracker.history().equals(expectedHashes)) {
 					fail("storia del tracker diversa dall'attesa (gioco " + g + ", semi-mossa " + ply + "): " + tracker.history().size() + " vs "
 							+ expectedHashes.size());
@@ -242,17 +243,17 @@ public class SelfPlayRulesCheck {
 				failures == before ? "OK  " : "FAIL", "[tracker vs oracolo]", games, moves, repetitions, captureResets);
 	}
 
-	/** Hash attesi: le posizioni dall'ultima cattura (oracolo = conteggio pezzi), la corrente compresa. */
-	static List<Long> expectedHistory(List<State> states) {
+	/** Storia attesa (chiavi esatte): le posizioni dall'ultima cattura (oracolo = conteggio pezzi), la corrente compresa. */
+	static PositionHistory expectedHistory(List<State> states) {
 		int start = 0;
 		for (int i = 1; i < states.size(); i++) {
 			if (pieces(states.get(i)) < pieces(states.get(i - 1))) {
 				start = i;
 			}
 		}
-		List<Long> h = new ArrayList<>();
+		PositionHistory h = new PositionHistory();
 		for (int i = start; i < states.size(); i++) {
-			h.add(ZobristHasher.fullHash(states.get(i)));
+			TestPositions.addTo(h, states.get(i)); // chiave esatta calcolata in modo INDIPENDENTE da FastState
 		}
 		return h;
 	}
@@ -271,7 +272,7 @@ public class SelfPlayRulesCheck {
 		}
 
 		@Override
-		public Action choose(State state, List<Long> history) {
+		public Action choose(State state, PositionHistory history) {
 			seen.add(state);
 			if (!history.equals(expectedHistoryOfCurrent(seen))) {
 				contractViolated = true;
@@ -283,7 +284,7 @@ public class SelfPlayRulesCheck {
 		}
 
 		/** Gli stati passati al chooser sono consecutivi: l'oracolo li concatena con la mossa applicata dal tracker. */
-		private List<Long> expectedHistoryOfCurrent(List<State> states) {
+		private PositionHistory expectedHistoryOfCurrent(List<State> states) {
 			return expectedHistory(states);
 		}
 	}
@@ -359,7 +360,7 @@ public class SelfPlayRulesCheck {
 				}
 			}, new SelfPlayTrainer.MoveChooser() {
 				@Override
-				public Action choose(State s, List<Long> h) {
+				public Action choose(State s, PositionHistory h) {
 					fail("il chooser non deve essere chiamato in una posizione senza mosse");
 					return null;
 				}
@@ -380,7 +381,7 @@ public class SelfPlayRulesCheck {
 			}
 		}, new SelfPlayTrainer.MoveChooser() {
 			@Override
-			public Action choose(State s, List<Long> h) {
+			public Action choose(State s, PositionHistory h) {
 				return AshtonRules.generateMoves(s).get(0);
 			}
 		}, true);
@@ -422,7 +423,7 @@ public class SelfPlayRulesCheck {
 				}
 			}, new SelfPlayTrainer.MoveChooser() {
 				@Override
-				public Action choose(State st, List<Long> h) {
+				public Action choose(State st, PositionHistory h) {
 					return win;
 				}
 			}, true);

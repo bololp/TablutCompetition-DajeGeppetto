@@ -13,6 +13,7 @@ import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
 import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 import it.unibo.ai.didattica.competition.tablut.engine.Move;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 import it.unibo.ai.didattica.competition.tablut.engine.UndoInfo;
 
 /**
@@ -49,18 +50,14 @@ public final class MctsTimingProbe {
 			final MoveSearcher opp = new NegamaxSearcher(new Negamax(new SimpleEvaluator(), 30, true, 1 << 20, true, Negamax.ORDER_DEFAULT, 1, false).setThreads(1)
 					.setSafetyMarginMillis(0));
 			final FastState cur = FastState.fromState(new StateTablut());
-			final List<Long> hist = new ArrayList<>();
-			hist.add(cur.zobristHash);
+			final PositionHistory hist = new PositionHistory();
+			hist.add(cur);
 			long maxOver = Long.MIN_VALUE, maxNodes = 0;
 			int moves = 0, late = 0;
 			for (int ply = 0; ply < 160 && cur.winner == FastState.WINNER_NONE; ply++) {
 				final boolean mctsTurn = (cur.turn == BoardConstants.WHITE_TURN) == mctsWhite;
-				final long[] h = new long[hist.size()];
-				for (int i = 0; i < h.length; i++) {
-					h[i] = hist.get(i);
-				}
 				final long t0 = System.nanoTime();
-				final int mv = mctsTurn ? mcts.findBestMove(cur, budget, h, h.length) : opp.findBestMove(cur, oppMs, h, h.length);
+				final int mv = mctsTurn ? mcts.findBestMove(cur, budget, hist) : opp.findBestMove(cur, oppMs, hist);
 				final long ms = (System.nanoTime() - t0) / 1_000_000L;
 				if (mv == Move.NONE) {
 					break;
@@ -80,10 +77,10 @@ public final class MctsTimingProbe {
 				if (u.wasCapture()) {
 					hist.clear();
 				}
-				if (hist.contains(cur.zobristHash)) {
+				if (hist.contains(cur)) {
 					break; // ripetizione: pareggio
 				}
-				hist.add(cur.zobristHash);
+				hist.add(cur);
 			}
 			System.out.printf("partita %d (MCTS %s): %d mosse MCTS, sforamento massimo %d ms, %d mosse oltre +100 ms, nodi massimi %d%n", g + 1, mctsWhite ? "Bianco" : "Nero", moves,
 					maxOver, late, maxNodes);

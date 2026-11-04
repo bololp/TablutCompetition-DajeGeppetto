@@ -1,7 +1,5 @@
 package it.unibo.ai.didattica.competition.tablut.aiplayer;
 
-import java.util.Collections;
-import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -15,6 +13,7 @@ import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 import it.unibo.ai.didattica.competition.tablut.engine.Move;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 import it.unibo.ai.didattica.competition.tablut.engine.UndoInfo;
 import it.unibo.ai.didattica.competition.tablut.engine.ZobristHash;
 
@@ -276,7 +275,8 @@ public class Negamax {
 	/** Punteggi di ordinamento per ply (stessa indicizzazione di {@link #moveStack}). */
 	private int[][] scoreStack;
 	/** Storia di ripetizione: hash delle posizioni dall'ultima cattura, radice compresa, nel percorso corrente. */
-	private long[] histKeys = new long[256];
+	/** Storia di ripetizione del percorso: chiavi ESATTE delle posizioni, {@link PositionHistory#LONGS_PER_POSITION} long ciascuna. */
+	private long[] histKeys = new long[256 * PositionHistory.LONGS_PER_POSITION];
 	private int histLen;
 	/** Inizio del segmento "dall'ultima cattura" dentro {@link #histKeys}: le posizioni prima di una cattura non possono ripresentarsi. */
 	private int histBase;
@@ -449,9 +449,11 @@ public class Negamax {
 		scoreStack = sc;
 	}
 
+	/** @param capacity numero di POSIZIONI che la storia deve poter contenere */
 	private void ensureHist(int capacity) {
-		if (histKeys.length < capacity) {
-			histKeys = java.util.Arrays.copyOf(histKeys, Math.max(capacity, histKeys.length * 2));
+		final int need = capacity * PositionHistory.LONGS_PER_POSITION;
+		if (histKeys.length < need) {
+			histKeys = java.util.Arrays.copyOf(histKeys, Math.max(need, histKeys.length * 2));
 		}
 	}
 
@@ -467,53 +469,41 @@ public class Negamax {
 	 * "storia reale" tra chiamate diverse).
 	 */
 	public Action findBestMove(State rootState, long timeBudgetMillis) {
-		return findBestMove(rootState, timeBudgetMillis, Collections.<Long>emptyList());
+		return findBestMove(rootState, timeBudgetMillis, PositionHistory.empty());
 	}
 
 	/**
 	 * Trova la migliore mossa per il giocatore di turno in {@code rootState}, usando al massimo {@code timeBudgetMillis}
 	 * millisecondi. Forma "di confine" per chi ha uno {@link State} del dominio (client, trainer, test): converte la
 	 * radice in {@link FastState} (O(81), una volta per mossa) e la mossa trovata in {@link Action}. La ricerca vera e'
-	 * quella di {@link #findBestMove(FastState, long, long[], int)}.
+	 * quella di {@link #findBestMove(FastState, long, PositionHistory)}.
 	 *
-	 * @param historySinceLastCapture hash Zobrist ({@link ZobristHash}, gli stessi di {@code ZobristHasher.fullHash})
-	 *        delle posizioni REALMENTE occorse in partita dall'ultima cattura (radice inclusa), piu' vecchia per prima. Il
-	 *        chiamante (tipicamente {@code TablutNegamaxClient}) la mantiene aggiornata; qui viene copiata, mai modificata.
+	 * @param historySinceLastCapture le posizioni REALMENTE occorse in partita dall'ultima cattura (radice inclusa), piu' vecchia per
+	 *        prima, come chiavi ESATTE ({@link PositionHistory}: nessuna collisione possibile). Il chiamante (tipicamente
+	 *        {@code TablutNegamaxClient}) la mantiene aggiornata; qui viene copiata, mai modificata.
 	 * @return la miglior mossa trovata, oppure {@code null} se in {@code rootState} il giocatore di turno non ha mosse
 	 *         legali (situazione che, di norma, il chiamante non dovrebbe nemmeno raggiungere: se non si hanno mosse
 	 *         legali si e' gia' perso).
 	 */
-	public Action findBestMove(State rootState, long timeBudgetMillis, List<Long> historySinceLastCapture) {
+	public Action findBestMove(State rootState, long timeBudgetMillis, PositionHistory historySinceLastCapture) {
 		int mv = findBestMove(FastState.fromState(rootState), timeBudgetMillis, historySinceLastCapture);
 		return mv == Move.NONE ? null : Move.toAction(mv, rootState.getTurn());
 	}
 
-	/** Come {@link #findBestMove(FastState, long, long[], int)} senza storia. Ritorna la mossa compatta, o {@link Move#NONE}. */
+	/** Come {@link #findBestMove(FastState, long, PositionHistory)} senza storia. Ritorna la mossa compatta, o {@link Move#NONE}. */
 	public int findBestMove(FastState rootState, long timeBudgetMillis) {
-		return findBestMove(rootState, timeBudgetMillis, NO_HISTORY, 0);
+		return findBestMove(rootState, timeBudgetMillis, PositionHistory.empty());
 	}
-
-	/** Come {@link #findBestMove(FastState, long, long[], int)} con la storia in una {@code List<Long>}. */
-	public int findBestMove(FastState rootState, long timeBudgetMillis, List<Long> historySinceLastCapture) {
-		final int n = historySinceLastCapture.size();
-		final long[] h = new long[n];
-		for (int i = 0; i < n; i++) {
-			h[i] = historySinceLastCapture.get(i);
-		}
-		return findBestMove(rootState, timeBudgetMillis, h, n);
-	}
-
-	private static final long[] NO_HISTORY = new long[0];
 
 	/**
 	 * La ricerca vera: trova la migliore mossa per chi deve muovere in {@code rootState} entro {@code timeBudgetMillis}.
 	 * {@code rootState} non viene modificata ne' conservata (ogni worker lavora su una propria copia).
 	 *
-	 * @param history       hash Zobrist delle posizioni dall'ultima cattura, radice inclusa, piu' vecchia per prima
-	 *                      (prime {@code historyLen} voci; copiata, mai modificata)
+	 * @param history       le posizioni dall'ultima cattura, radice inclusa, piu' vecchia per prima, come chiavi esatte
+	 *                      ({@link PositionHistory}; copiata, mai modificata)
 	 * @return la mossa ({@link Move}), oppure {@link Move#NONE} se chi deve muovere non ha mosse legali
 	 */
-	public int findBestMove(FastState rootState, long timeBudgetMillis, long[] history, int historyLen) {
+	public int findBestMove(FastState rootState, long timeBudgetMillis, PositionHistory history) {
 		final long dl = System.currentTimeMillis() + Math.max(50, timeBudgetMillis - safetyMarginMillis);
 		if (tt != null) {
 			tt.newSearch(); // nuova mossa di partita: le voci precedenti diventano "vecchie" (conta solo per la TT a due slot)
@@ -522,7 +512,7 @@ public class Negamax {
 		if (nThreads <= 1) {
 			this.control = null;
 			this.deadline = dl;
-			int r = searchRoot(rootState, history, historyLen, 0);
+			int r = searchRoot(rootState, history, 0);
 			this.lastTotalNodeCount = this.lastNodeCount;
 			this.lastThreadsUsed = 1;
 			this.lastHelperErrors = 0;
@@ -530,7 +520,7 @@ public class Negamax {
 			this.lastMainDepth = this.lastDepthReached;
 			return r;
 		}
-		return findBestMoveParallel(rootState, dl, history, historyLen, nThreads);
+		return findBestMoveParallel(rootState, dl, history, nThreads);
 	}
 
 	/** Solo per i test: la risposta registrata come countermove e' una mossa che il lato al tratto puo' fare davvero in {@code st} (pedina sua in partenza, arrivo vuoto, stessa riga/colonna). */
@@ -568,7 +558,7 @@ public class Negamax {
 	 * Iterative deepening alla radice di UN worker (il principale, workerId 0, o un helper). Usa {@link #deadline}
 	 * e {@link #control} gia' impostati dal chiamante e lascia i risultati nei campi {@code last*}.
 	 */
-	int searchRoot(FastState rootState, long[] history, int historyLen, int workerId) {
+	int searchRoot(FastState rootState, PositionHistory history, int workerId) {
 		this.timeUp = false;
 		this.nodeCounter = 0;
 		this.repetitionEventCounter = 0;
@@ -594,9 +584,8 @@ public class Negamax {
 
 		final int mySign = (s.turn == BoardConstants.WHITE_TURN) ? 1 : -1;
 		// Storia: copia nello stack interno, che la ricerca estende/accorcia ma che non altera mai l'array del chiamante.
-		ensureHist(historyLen + maxDepth + 8);
-		System.arraycopy(history, 0, histKeys, 0, historyLen);
-		histLen = historyLen;
+		ensureHist(history.size() + maxDepth + 8);
+		histLen = history.copyKeysTo(histKeys, 0);
 		histBase = 0;
 
 		final boolean rootByScores = (orderingMode & ORDER_ROOT_SCORES) != 0;
@@ -693,21 +682,22 @@ public class Negamax {
 		final UndoInfo u = undoStack[sp];
 		prevMoveAt[sp + 1] = Move.index(move);
 		s.makeMove(move, u);
-		final long childHash = s.zobristHash;
+		// chiave ESATTA della posizione figlia (non l'hash): una ripetizione e' riconosciuta solo se la posizione e' davvero la stessa
+		final long k0 = s.key0, k1 = s.key1, k2 = s.key2;
 		double score;
 		if (u.wasCapture()) {
 			// una cattura azzera la memoria: il segmento di storia riparte da questa sola posizione
 			final int savedLen = histLen, savedBase = histBase;
 			histBase = histLen;
-			histKeys[histLen++] = childHash;
+			pushHistory(k0, k1, k2);
 			score = negamax(depth, alpha, beta, perspective, sp + 1);
 			histLen = savedLen;
 			histBase = savedBase;
-		} else if (historyContains(childHash)) {
+		} else if (historyContains(k0, k1, k2)) {
 			repetitionEventCounter++;
 			score = 0; // seconda occorrenza della stessa posizione dall'ultima cattura: pareggio
 		} else {
-			histKeys[histLen++] = childHash;
+			pushHistory(k0, k1, k2);
 			score = negamax(depth, alpha, beta, perspective, sp + 1);
 			histLen--; // backtrack: non deve restare visibile ai fratelli successivi
 		}
@@ -715,10 +705,19 @@ public class Negamax {
 		return score;
 	}
 
-	private boolean historyContains(long key) {
+	private void pushHistory(long k0, long k1, long k2) {
+		final int o = histLen * PositionHistory.LONGS_PER_POSITION;
+		histKeys[o] = k0;
+		histKeys[o + 1] = k1;
+		histKeys[o + 2] = k2;
+		histLen++;
+	}
+
+	/** Vero se la posizione di chiave ESATTA {@code (k0,k1,k2)} e' gia' nel segmento di storia corrente (dall'ultima cattura). */
+	private boolean historyContains(long k0, long k1, long k2) {
 		final long[] h = histKeys;
-		for (int i = histBase; i < histLen; i++) {
-			if (h[i] == key) {
+		for (int i = histBase, o = histBase * PositionHistory.LONGS_PER_POSITION; i < histLen; i++, o += PositionHistory.LONGS_PER_POSITION) {
+			if (h[o] == k0 && h[o + 1] == k1 && h[o + 2] == k2) {
 				return true;
 			}
 		}
@@ -732,7 +731,7 @@ public class Negamax {
 	 *                    Bianco, -1 dal punto di vista del Nero (classica
 	 *                    convenzione negamax "a colori").
 	 * @param sp          indice di stack di QUESTO nodo (radice = 0, suoi figli = 1, ...): selezione dei buffer di
-	 *                    mosse e di ordinamento. L'hash del nodo e' {@code st.zobristHash}, aggiornato incrementalmente.
+	 *                    mosse e di ordinamento. La TT identifica il nodo con {@code st} (hash o chiave esatta); la storia con la sua chiave esatta.
 	 *                    La storia ({@link #histKeys}) contiene il percorso dalla radice fino a questo nodo (compreso).
 	 */
 	// package-private per lo stesso motivo di exploreChild, si veda sopra.
@@ -754,7 +753,6 @@ public class Negamax {
 			return 0; // pareggio
 		}
 
-		final long hash = s.zobristHash;
 		double alphaOriginal = alpha;
 		int ttMovePacked = -1;
 		// "Firma" del contatore di ripetizioni a questo punto: se cambia mentre
@@ -1112,15 +1110,11 @@ public class Negamax {
 	 * di ripetizione, e prepara gli stack per una discesa di {@code depth} ply. Dopo di questo si possono chiamare
 	 * direttamente {@link #negamax} ed {@link #exploreChild} con {@code sp = 0}.
 	 */
-	void installForTest(FastState position, List<Long> history, int depth) {
+	void installForTest(FastState position, PositionHistory history, int depth) {
 		allocStacks(depth + 4);
 		st.copyFrom(position);
-		final int n = history.size();
-		ensureHist(n + depth + 8);
-		for (int i = 0; i < n; i++) {
-			histKeys[i] = history.get(i);
-		}
-		histLen = n;
+		ensureHist(history.size() + depth + 8);
+		histLen = history.copyKeysTo(histKeys, 0);
 		histBase = 0;
 		timeUp = false;
 		deadline = Long.MAX_VALUE;
@@ -1265,7 +1259,7 @@ public class Negamax {
 		return best;
 	}
 
-	private int findBestMoveParallel(FastState rootState, long dl, long[] history, int historyLen, int nThreads) {
+	private int findBestMoveParallel(FastState rootState, long dl, PositionHistory history, int nThreads) {
 		if (!rootState.hasLegalMove()) {
 			this.lastThreadsUsed = 1;
 			return Move.NONE;
@@ -1287,13 +1281,13 @@ public class Negamax {
 			h.deadline = dl;
 			h.helperError = null;
 			final FastState rootCopy = rootState.duplicate();
-			final long[] historyCopy = java.util.Arrays.copyOf(history, historyLen);
+			final PositionHistory historyCopy = history.copy();
 			final int workerId = i + 1;
 			helperFutures[i] = pool.submit(new Runnable() {
 				@Override
 				public void run() {
 					try {
-						h.searchRoot(rootCopy, historyCopy, historyCopy.length, workerId);
+						h.searchRoot(rootCopy, historyCopy, workerId);
 					} catch (Throwable t) {
 						h.helperError = t; // un helper in errore non deve mai far fallire la mossa
 					}
@@ -1305,7 +1299,7 @@ public class Negamax {
 
 		int best;
 		try {
-			best = searchRoot(rootState, history, historyLen, 0);
+			best = searchRoot(rootState, history, 0);
 		} finally {
 			ctl.stop = true; // il principale ha finito: gli helper si fermano al prossimo controllo (~2048 nodi)
 		}

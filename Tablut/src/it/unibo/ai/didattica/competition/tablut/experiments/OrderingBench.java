@@ -14,6 +14,7 @@ import it.unibo.ai.didattica.competition.tablut.domain.Action;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
 import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 
 /**
  * Misura quanti nodi e quanto tempo servono varie modalita' di ordinamento delle mosse, a profondita' FISSA, su posizioni di
@@ -83,7 +84,7 @@ public class OrderingBench {
 					n = new Negamax(ev, depth, true, 1 << 20, true, mode).setThreads(1); // TT, history e killer vuote a ogni ricerca
 				}
 				long t0 = System.nanoTime();
-				n.findBestMove(s, 100_000_000L, new ArrayList<Long>());
+				n.findBestMove(s, 100_000_000L, PositionHistory.empty());
 				nanos += System.nanoTime() - t0;
 				nodes += n.lastNodeCount;
 				if (scores != null) {

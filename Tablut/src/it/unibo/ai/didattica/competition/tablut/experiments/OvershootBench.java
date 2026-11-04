@@ -10,6 +10,7 @@ import it.unibo.ai.didattica.competition.tablut.aiplayer.Negamax;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.OrderingSpec;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.SimpleEvaluator;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 
 /**
  * Misura di quanto {@code Negamax.findBestMove} SFORA il tempo che gli e' stato assegnato: con margine 0 e budget B, lo sforo e'
@@ -36,13 +37,13 @@ public class OvershootBench {
 		Negamax n = new Negamax(ev, 40, true, Negamax.DEFAULT_TT_SIZE, true, order, threads, false).setThreads(threads).setSafetyMarginMillis(0);
 		try {
 			// riscaldamento del JIT (due ricerche brevi)
-			n.findBestMove(positions.get(0), 300L, new ArrayList<Long>());
-			n.findBestMove(positions.get(1), 300L, new ArrayList<Long>());
+			n.findBestMove(positions.get(0), 300L, PositionHistory.empty());
+			n.findBestMove(positions.get(1), 300L, PositionHistory.empty());
 			List<Long> over = new ArrayList<>();
 			int short_ = 0;
 			for (int i = 0; i < searches && i < positions.size(); i++) {
 				long t0 = System.nanoTime();
-				n.findBestMove(positions.get(i), budget, new ArrayList<Long>());
+				n.findBestMove(positions.get(i), budget, PositionHistory.empty());
 				long used = (System.nanoTime() - t0) / 1_000_000L;
 				if (used < budget - 100) {
 					short_++; // trovata una vittoria forzata: non misura il tempo

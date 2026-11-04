@@ -13,6 +13,7 @@ import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
 import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 import it.unibo.ai.didattica.competition.tablut.engine.Move;
 import it.unibo.ai.didattica.competition.tablut.engine.UndoInfo;
 import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
@@ -27,6 +28,14 @@ import static it.unibo.ai.didattica.competition.tablut.aiplayer.MctsTestSupport.
  * Uso: {@code MctsConcurrencyCheck [seed]}.
  */
 public class MctsConcurrencyCheck {
+
+	/** Storia con una voce ESTRANEA (una chiave che non e' quella di nessuna posizione reale) seguita dalla radice. */
+	static PositionHistory foreignThen(FastState p) {
+		final PositionHistory h = new PositionHistory();
+		h.add(0x7777L, 0x7777L, 0x7777L);
+		h.add(p);
+		return h;
+	}
 
 	static int failures = 0;
 	static int checks = 0;
@@ -117,7 +126,7 @@ public class MctsConcurrencyCheck {
 						continue;
 					}
 					final Mcts m = mk(cfg, threads);
-					final int mv = m.findBestMove(p, 90, rootOnly(p), 1);
+					final int mv = m.findBestMove(p, 90, rootOnly(p));
 					runs++;
 					sims += m.lastSims;
 					if (m.lastError != null) {
@@ -213,7 +222,7 @@ public class MctsConcurrencyCheck {
 					continue;
 				}
 				final Mcts m = new Mcts(ev, MctsConfig.parse("expand=1"), 4).setSafetyMarginMillis(0);
-				final int mv = m.findBestMove(p, 250, rootOnly(p), 1);
+				final int mv = m.findBestMove(p, 250, rootOnly(p));
 				sims += m.lastSims;
 				if (m.lastError != null || !contains(legal(p), mv)) {
 					bad++;
@@ -258,7 +267,7 @@ public class MctsConcurrencyCheck {
 		int bad = 0, errors = 0, illegal = 0;
 		for (FastState p : tiny) {
 			final Mcts m = MctsSearchCheck.mk(SLOW, "expand=0", 16);
-			final int mv = m.findBestMove(p, 250, rootOnly(p), 1);
+			final int mv = m.findBestMove(p, 250, rootOnly(p));
 			aborts += m.lastAborts;
 			sims += m.lastSims;
 			if (m.lastError != null) {
@@ -287,7 +296,7 @@ public class MctsConcurrencyCheck {
 			}
 			final Mcts m = MctsSearchCheck.mk(SLOW, "expand=0,reuse=false,escape=false", 8);
 			m.setMaxSims(40);
-			m.findBestMove(p, 600000, rootOnly(p), 1);
+			m.findBestMove(p, 600000, rootOnly(p));
 			if (m.rootNode() == null || m.rootNode().solved()) {
 				m.shutdown();
 				continue;
@@ -322,7 +331,7 @@ public class MctsConcurrencyCheck {
 			final GameTracker g = new GameTracker(TestPositions.initial());
 			m.clearTree();
 			for (int i = 0; i < 24 && !g.over(); i++) {
-				final int mv = m.findBestMove(g.cur, 80, g.hist(), g.hist().length);
+				final int mv = m.findBestMove(g.cur, 80, g.hist());
 				plies++;
 				if (m.lastReused) {
 					reused++;
@@ -391,10 +400,10 @@ public class MctsConcurrencyCheck {
 			return cur.winner != FastState.WINNER_NONE;
 		}
 
-		long[] hist() {
-			final long[] h = new long[seg.size()];
-			for (int i = 0; i < h.length; i++) {
-				h[i] = seg.get(i).zobristHash;
+		PositionHistory hist() {
+			final PositionHistory h = new PositionHistory(seg.size());
+			for (FastState f : seg) {
+				h.add(f);
 			}
 			return h;
 		}
@@ -427,19 +436,20 @@ public class MctsConcurrencyCheck {
 		int searches = 0, predicted = 0, reusedCount = 0, mismatches = 0, walkerBad = 0, badIdentity = 0;
 		for (int i = 0; i < 40 && !g.over(); i++) {
 			final boolean corrupt = corruptOdd && (i % 3 == 2);
-			long[] h = g.hist();
+			PositionHistory h = g.hist();
 			String[] keys = g.keys();
 			if (corrupt) {
-				final long[] h2 = new long[h.length + 1];
-				final String[] k2 = new String[h.length + 1];
-				h2[0] = 0x1234567L;
+				// una voce "estranea" in testa alla storia: una chiave che non e' quella di nessuna posizione reale
+				final PositionHistory h2 = new PositionHistory(h.size() + 1);
+				final String[] k2 = new String[h.size() + 1];
+				h2.add(0x1234567L, 0x1234567L, 0x1234567L);
 				k2[0] = "bogus";
-				System.arraycopy(h, 0, h2, 1, h.length);
+				h2.addAll(h);
 				System.arraycopy(keys, 0, k2, 1, keys.length);
 				h = h2;
 				keys = k2;
 			}
-			final int mv = m.findBestMove(g.cur, 600000, h, h.length);
+			final int mv = m.findBestMove(g.cur, 600000, h);
 			searches++;
 			final boolean prevCorruptBefore = prevCorrupt;
 			// dopo una ricerca con storia alterata l'albero conservato presuppone quella storia: il riuso e' valido solo se nel frattempo c'e' stata una
@@ -541,19 +551,19 @@ public class MctsConcurrencyCheck {
 		final FastState p = gamePositions(seed + 4, 6, 7).get(4);
 		final Mcts m = mk("expand=1", 1);
 		m.setMaxSims(300);
-		m.findBestMove(p, 600000, rootOnly(p), 1);
+		m.findBestMove(p, 600000, rootOnly(p));
 		final long v1 = m.rootNode().totalVisits;
 		final Mcts.Node first = m.rootNode();
-		m.findBestMove(p, 600000, rootOnly(p), 1);
+		m.findBestMove(p, 600000, rootOnly(p));
 		check("stessa posizione due volte: riusata la radice (" + m.lastReusedVisits + " visite) e le visite si sommano", m.lastReused && m.rootNode() == first && m.lastReusedVisits == v1
 				&& m.rootNode().totalVisits == v1 + m.lastSims);
 		// stessa posizione ma storia DIVERSA (una voce in piu' in testa): i pareggi per ripetizione dell'albero sarebbero calcolati con un'altra storia
-		m.findBestMove(p, 600000, new long[] { 0x7777L, p.zobristHash }, 2);
+		m.findBestMove(p, 600000, foreignThen(p));
 		check("stessa posizione con storia diversa: il riuso e' rifiutato", !m.lastReused && m.lastReusedNodes == 0);
-		m.findBestMove(p, 600000, new long[] { 0x7777L, p.zobristHash }, 2);
+		m.findBestMove(p, 600000, foreignThen(p));
 		check("... e la volta dopo, con quella stessa storia, l'albero nuovo e' riusabile", m.lastReused);
 		final FastState other = gamePositions(seed + 5, 6, 7).get(5);
-		m.findBestMove(other, 600000, rootOnly(other), 1);
+		m.findBestMove(other, 600000, rootOnly(other));
 		check("posizione diversa non raggiungibile: albero nuovo", !m.lastReused && m.lastReusedNodes == 0);
 		m.clearTree();
 		check("clearTree: albero eliminato", m.rootNode() == null);
@@ -576,7 +586,7 @@ public class MctsConcurrencyCheck {
 				final Mcts m = mk("expand=0", 1);
 				m.setMaxSims(1500);
 				final GameTracker g = new GameTracker(p);
-				m.findBestMove(p, 600000, g.hist(), 1);
+				m.findBestMove(p, 600000, g.hist());
 				// si segue nell'albero l'arco piu' visitato per `depth` semi-mosse
 				Mcts.Node n = m.rootNode();
 				final int[] path = new int[depth];
@@ -613,7 +623,7 @@ public class MctsConcurrencyCheck {
 				}
 				tested++;
 				m.setMaxSims(50);
-				m.findBestMove(g.cur, 600000, g.hist(), g.hist().length);
+				m.findBestMove(g.cur, 600000, g.hist());
 				if (m.lastReused && m.rootNode() == target && m.lastReusedVisits == pre && m.lastReusedNodes == preNodes) {
 					ok++;
 				} else {
@@ -636,12 +646,12 @@ public class MctsConcurrencyCheck {
 
 		// tetto ai nodi
 		final Mcts c1 = mk("expand=0,maxnodes=60,reuse=false", 1);
-		final int mv1 = c1.findBestMove(start, 60000, rootOnly(start), 1);
+		final int mv1 = c1.findBestMove(start, 60000, rootOnly(start));
 		check("tetto 60 nodi (1 thread): raggiunto esattamente, ricerca fermata, mossa legale", c1.lastMemoryCapHit && c1.nodeCountForTest() == 60 && contains(legal(start), mv1));
 		check("tetto: albero coerente", new Walk(c1, SIMPLE, false, 0).run(c1.rootNode(), start, keysOf(start)) == null);
 		check("tetto: la ricerca e' terminata presto (" + c1.lastElapsedMillis + " ms)", c1.lastElapsedMillis < 3000);
 		final Mcts c4 = mk("expand=0,maxnodes=200,reuse=false", 4);
-		final int mv4 = c4.findBestMove(start, 60000, rootOnly(start), 1);
+		final int mv4 = c4.findBestMove(start, 60000, rootOnly(start));
 		check("tetto 200 nodi (4 thread): superato al piu' del numero dei thread (" + c4.nodeCountForTest() + ")", c4.lastMemoryCapHit && c4.nodeCountForTest() >= 200
 				&& c4.nodeCountForTest() <= 200 + 4 && contains(legal(start), mv4));
 		check("tetto (4 thread): albero coerente", new Walk(c4, SIMPLE, false, 0).run(c4.rootNode(), start, keysOf(start)) == null);
@@ -650,7 +660,7 @@ public class MctsConcurrencyCheck {
 		// profondita' massima
 		final Mcts d3 = mk("expand=0,maxdepth=3,reuse=false", 1);
 		d3.setMaxSims(3000);
-		d3.findBestMove(start, 600000, rootOnly(start), 1);
+		d3.findBestMove(start, 600000, rootOnly(start));
 		final Walk wd = new Walk(d3, SIMPLE, false, 0);
 		final String ed = wd.run(d3.rootNode(), start, keysOf(start));
 		check("maxdepth=3: nessun nodo oltre la profondita' 2, albero coerente (" + wd.maxDepth + ") " + (ed == null ? "" : ed), ed == null && wd.maxDepth == 2);
@@ -660,7 +670,7 @@ public class MctsConcurrencyCheck {
 		for (long n : new long[] { 1, 2, 17, 500 }) {
 			final Mcts m = mk("expand=1,reuse=false", 1);
 			m.setMaxSims(n);
-			m.findBestMove(start, 600000, rootOnly(start), 1);
+			m.findBestMove(start, 600000, rootOnly(start));
 			if (m.lastSims != n || m.rootNode().totalVisits != n) {
 				exact = false;
 				System.out.println("  n=" + n + " lastSims=" + m.lastSims + " visite=" + m.rootNode().totalVisits);
@@ -676,7 +686,7 @@ public class MctsConcurrencyCheck {
 				final Mcts m = mk("expand=1,reuse=false", threads);
 				m.setSafetyMarginMillis(cs[1]);
 				final long t0 = System.nanoTime();
-				final int mv = m.findBestMove(start, cs[0], rootOnly(start), 1);
+				final int mv = m.findBestMove(start, cs[0], rootOnly(start));
 				final long ms = (System.nanoTime() - t0) / 1_000_000L;
 				final long want = Math.max(10, cs[0] - cs[1]);
 				check("tempo: budget " + cs[0] + " margine " + cs[1] + " (" + threads + " thread): " + ms + " ms, atteso ~" + want, ms >= want - 5 && ms <= want + 300
@@ -755,7 +765,7 @@ public class MctsConcurrencyCheck {
 			final Mcts m = new Mcts(probe, MctsConfig.parse("expand=0,cache=0"), 1).setSafetyMarginMillis(0);
 			m.setMaxSims(1500);
 			final GameTracker g = new GameTracker(p);
-			m.findBestMove(p, 600000, g.hist(), 1);
+			m.findBestMove(p, 600000, g.hist());
 			Mcts.Node oldRootNode = m.rootNode();
 			// La nostra mossa e' scelta DIVERSA dal primo arco dell'ultimo percorso simulato (cosi' i nodi che l'array del percorso ricorda sono nell'albero che
 			// si scarta, non nel sottoalbero riusato) e con un figlio espanso, la cui risposta piu' visitata e' anch'essa espansa.
@@ -802,7 +812,7 @@ public class MctsConcurrencyCheck {
 			probe.newRoot = target;
 			probe.armed = true;
 			m.setMaxSims(1500);
-			m.findBestMove(g.cur, 600000, g.hist(), g.hist().length);
+			m.findBestMove(g.cur, 600000, g.hist());
 			tested++;
 			if (m.lastReused && m.lastReusedVisits > 0) {
 				retainedSubtree++;
@@ -861,13 +871,13 @@ public class MctsConcurrencyCheck {
 		final Mcts m = new Mcts(f, MctsConfig.parse("expand=1"), 1).setSafetyMarginMillis(0);
 		f.armed = true;
 		f.afterCalls = 0;
-		final int mv = m.findBestMove(start, 1000, rootOnly(start), 1);
+		final int mv = m.findBestMove(start, 1000, rootOnly(start));
 		check("guasto nell'espansione della radice: mossa legale restituita, errore registrato, nessun albero", contains(legal(start), mv) && m.lastError != null && m.rootNode() == null);
 
 		// l'istanza non resta avvelenata
 		f.armed = false;
 		m.setMaxSims(200);
-		final int mv2 = m.findBestMove(start, 1000, rootOnly(start), 1);
+		final int mv2 = m.findBestMove(start, 1000, rootOnly(start));
 		check("dopo il guasto l'istanza funziona di nuovo", contains(legal(start), mv2) && m.lastError == null && m.rootNode() != null && m.lastSims == 200);
 
 		// guasto durante la ricerca (1 thread)
@@ -876,11 +886,11 @@ public class MctsConcurrencyCheck {
 		f.afterCalls = 3000;
 		m.clearTree();
 		m.setMaxSims(0);
-		final int mv3 = m.findBestMove(start, 2000, rootOnly(start), 1);
+		final int mv3 = m.findBestMove(start, 2000, rootOnly(start));
 		check("guasto a meta' ricerca (1 thread): mossa legale, errore registrato, albero scartato", contains(legal(start), mv3) && m.lastError != null && m.rootNode() == null);
 		f.armed = false;
 		m.setMaxSims(100);
-		check("... e poi di nuovo utilizzabile", contains(legal(start), m.findBestMove(start, 1000, rootOnly(start), 1)) && m.lastError == null);
+		check("... e poi di nuovo utilizzabile", contains(legal(start), m.findBestMove(start, 1000, rootOnly(start))) && m.lastError == null);
 		m.shutdown();
 
 		// guasto in un helper (4 thread): la ricerca del thread principale non fallisce
@@ -889,11 +899,11 @@ public class MctsConcurrencyCheck {
 		f4.armed = true;
 		f4.onlyHelpers = true;
 		f4.afterCalls = 2000;
-		final int mv4 = m4.findBestMove(start, 600, rootOnly(start), 1);
+		final int mv4 = m4.findBestMove(start, 600, rootOnly(start));
 		check("guasto in un helper (4 thread): mossa legale, errore registrato, albero scartato", contains(legal(start), mv4) && m4.lastError != null && m4.rootNode() == null);
 		f4.armed = false;
 		m4.setMaxSims(0);
-		final int mv5 = m4.findBestMove(start, 300, rootOnly(start), 1);
+		final int mv5 = m4.findBestMove(start, 300, rootOnly(start));
 		check("... e il pool e' di nuovo utilizzabile (" + m4.lastSims + " simulazioni)", contains(legal(start), mv5) && m4.lastError == null && m4.lastSims > 100);
 		m4.shutdown();
 
@@ -905,7 +915,7 @@ public class MctsConcurrencyCheck {
 		final CountDownLatch latch = new CountDownLatch(1);
 		fb.blockHelpers = latch;
 		final long t0 = System.nanoTime();
-		final int mvb = mb.findBestMove(start, 200, rootOnly(start), 1);
+		final int mvb = mb.findBestMove(start, 200, rootOnly(start));
 		final long ms = (System.nanoTime() - t0) / 1_000_000L;
 		check("helper bloccato: si ritorna dopo l'attesa massima (" + ms + " ms) con mossa legale, errore, albero scartato", contains(legal(start), mvb) && mb.lastError != null
 				&& mb.rootNode() == null && ms >= 1500 && ms < 6000);
@@ -913,7 +923,7 @@ public class MctsConcurrencyCheck {
 		fb.armed = false;
 		fb.blockHelpers = null;
 		mb.setMaxSims(100);
-		check("... e l'istanza e' di nuovo utilizzabile con un pool nuovo", contains(legal(start), mb.findBestMove(start, 1000, rootOnly(start), 1)) && mb.lastError == null);
+		check("... e l'istanza e' di nuovo utilizzabile con un pool nuovo", contains(legal(start), mb.findBestMove(start, 1000, rootOnly(start))) && mb.lastError == null);
 		mb.shutdown();
 	}
 
@@ -937,8 +947,8 @@ public class MctsConcurrencyCheck {
 			b.setMaxSims(250);
 		}
 		State s = TestPositions.initial();
-		final List<Long> hist = new ArrayList<>();
-		hist.add(ZobristHasher.fullHash(s));
+		final PositionHistory hist = new PositionHistory();
+		hist.add(s);
 		int illegal = 0, provenWins = 0;
 		boolean provenAndNotWon = false;
 		int outcome = 0;
@@ -956,11 +966,7 @@ public class MctsConcurrencyCheck {
 			Action chosen;
 			if (mctsMoves || b != null) {
 				final Mcts who = mctsMoves ? a : b;
-				final long[] h = new long[hist.size()];
-				for (int i = 0; i < h.length; i++) {
-					h[i] = hist.get(i);
-				}
-				final int mv = who.findBestMove(FastState.fromState(s), 600000, h, h.length);
+				final int mv = who.findBestMove(FastState.fromState(s), 600000, hist);
 				if (mv == Move.NONE) {
 					illegal++;
 					break;
@@ -993,7 +999,7 @@ public class MctsConcurrencyCheck {
 			if (AshtonRules.wasCapture(s, next, chosen)) {
 				hist.clear();
 			}
-			final long hn = ZobristHasher.fullHash(next);
+			final FastState hn = FastState.fromState(next);
 			if (hist.contains(hn)) { // stessa posizione due volte dall'ultima cattura: pareggio
 				outcome = 0;
 				s = next;

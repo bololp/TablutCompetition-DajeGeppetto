@@ -13,6 +13,8 @@ import it.unibo.ai.didattica.competition.tablut.domain.Action;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
 
 /**
  * Test del Lazy SMP e della transposition table lock-free (white-box: stesso package di {@link Negamax}).
@@ -520,7 +522,7 @@ public class LazySmpCheck {
 						System.out.println("  (info) pos " + p + " d=" + d + ": vittoria forzata vista solo da uno dei due (4 thread=" + mt.lastScore
 								+ ", esatto=" + exact.lastScore + ")");
 					} else {
-						double v = SearchOptimizationsCheck.exactValueOfMove(ev, s, m, d, new ArrayList<Long>());
+						double v = SearchOptimizationsCheck.exactValueOfMove(ev, s, m, d, PositionHistory.empty());
 						if (v < Negamax.WIN_SCORE) {
 							mismatches++;
 							System.out.println("  (info) pos " + p + " d=" + d + ": la mossa dei 4 thread NON vince secondo l'oracolo (valore " + v + ")");
@@ -651,9 +653,9 @@ public class LazySmpCheck {
 		int before = failures;
 		Object[] cyc = SearchOptimizationsCheck.buildCycle();
 		State p0 = (State) cyc[0], p1 = (State) cyc[1], p2 = (State) cyc[2], p3 = (State) cyc[3];
-		List<Long> history = new ArrayList<>();
+		PositionHistory history = new PositionHistory();
 		for (State p : new State[] { p0, p1, p2, p3 }) {
-			history.add(ZobristHasher.fullHash(p));
+			TestPositions.addTo(history, p);
 		}
 		Negamax mt = new Negamax(ev, 40, true, 1 << 16, true, Negamax.ORDER_DEFAULT, 4);
 		int runs = 0;

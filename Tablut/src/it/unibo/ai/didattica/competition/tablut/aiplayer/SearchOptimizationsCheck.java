@@ -12,6 +12,8 @@ import it.unibo.ai.didattica.competition.tablut.engine.Move;
 import it.unibo.ai.didattica.competition.tablut.domain.Action;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
 import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
 
 /**
@@ -121,30 +123,31 @@ public class SearchOptimizationsCheck {
 	 * (Non si puo' usare una seconda istanza di Negamax come oracolo: il suo orologio interno interrompe la ricerca
 	 * dopo 2048 nodi se non e' stata avviata da findBestMove.)
 	 */
-	static double exactValueOfMove(Evaluator ev, State root, Action m, int d, List<Long> history) {
+	static double exactValueOfMove(Evaluator ev, State root, Action m, int d, PositionHistory history) {
 		int mySign = root.getTurn() == Turn.WHITE ? 1 : -1;
 		State child = AshtonRules.applyMove(root, m);
-		return -oracleChild(ev, root, child, m, d - 1, -INF, INF, -mySign, new ArrayList<>(history));
+		return -oracleChild(ev, root, child, m, d - 1, -INF, INF, -mySign, history.copy());
 	}
 
 	static double oracleChild(Evaluator ev, State parent, State child, Action a, int depth, double alpha, double beta,
-			int persp, List<Long> history) {
-		long h = ZobristHasher.fullHash(child);
+			int persp, PositionHistory history) {
+		// chiave ESATTA calcolata in modo INDEPENDENTE da FastState e da Negamax (stesso oracolo storico, ma senza hash)
+		final long[] h = TestPositions.exactKey(child);
 		if (AshtonRules.wasCapture(parent, child, a)) {
-			List<Long> fresh = new ArrayList<>();
-			fresh.add(h);
+			PositionHistory fresh = new PositionHistory();
+			fresh.add(h[0], h[1], h[2]);
 			return oracle(ev, child, depth, alpha, beta, persp, fresh);
 		}
-		if (history.contains(h)) {
+		if (history.contains(h[0], h[1], h[2])) {
 			return 0; // ripetizione = pareggio
 		}
-		history.add(h);
+		history.add(h[0], h[1], h[2]);
 		double v = oracle(ev, child, depth, alpha, beta, persp, history);
-		history.remove(history.size() - 1);
+		history.removeLast();
 		return v;
 	}
 
-	static double oracle(Evaluator ev, State s, int depth, double alpha, double beta, int persp, List<Long> history) {
+	static double oracle(Evaluator ev, State s, int depth, double alpha, double beta, int persp, PositionHistory history) {
 		Turn t = s.getTurn();
 		if (t == Turn.WHITEWIN) {
 			return persp * (Negamax.WIN_SCORE + depth);
@@ -340,7 +343,7 @@ public class SearchOptimizationsCheck {
 						}
 					}
 					int persp = side == 0 ? 1 : -1;
-					n.installForTest(FastState.fromState(root), new ArrayList<Long>(), 1);
+					n.installForTest(FastState.fromState(root), PositionHistory.empty(), 1);
 					n.negamax(1, -INF, INF, persp, 0);
 					checks++;
 					if (!seen.equals(expected)) {
@@ -428,13 +431,13 @@ public class SearchOptimizationsCheck {
 				}
 				// l'alpha-beta di Negamax deve coincidere con l'oracolo indipendente (valida anche la baseline)
 				if (cfg == CFGS[0]) {
-					double vb = exactValueOfMove(ev, pos, mBase, base.lastDepthReached, new ArrayList<Long>());
+					double vb = exactValueOfMove(ev, pos, mBase, base.lastDepthReached, PositionHistory.empty());
 					if (Math.abs(vb - base.lastScore) > 1e-9) {
 						fail(where + ": l'alpha-beta di Negamax diverge dall'oracolo (" + base.lastScore + " vs " + vb + ")");
 					}
 				}
 				// la mossa del candidato deve essere ottima: valore esatto == valore di radice
-				double v = exactValueOfMove(ev, pos, mCand, cand.lastDepthReached, new ArrayList<Long>());
+				double v = exactValueOfMove(ev, pos, mCand, cand.lastDepthReached, PositionHistory.empty());
 				if (Math.abs(v - cand.lastScore) > 1e-9) {
 					fail(where + ": la mossa " + mCand.getFrom() + "->" + mCand.getTo() + " vale " + v + " ma il valore di radice e' "
 							+ cand.lastScore);
@@ -442,7 +445,7 @@ public class SearchOptimizationsCheck {
 				// e nessuna altra mossa deve valere di piu' (verifica indipendente del massimo)
 				if (d <= 3 && (cfg == CFGS[3] || cfg.exhaustive)) {
 					for (Action m : AshtonRules.generateMoves(pos)) {
-						double vm = exactValueOfMove(ev, pos, m, cand.lastDepthReached, new ArrayList<Long>());
+						double vm = exactValueOfMove(ev, pos, m, cand.lastDepthReached, PositionHistory.empty());
 						if (vm > cand.lastScore + 1e-9) {
 							fail(where + ": esiste una mossa migliore " + m.getFrom() + "->" + m.getTo() + " (" + vm + " > "
 									+ cand.lastScore + ")");
@@ -607,11 +610,11 @@ public class SearchOptimizationsCheck {
 	static void checkRepetitionHistory(Cfg cfg) {
 		Object[] cyc = buildCycle();
 		State p0 = (State) cyc[0], p1 = (State) cyc[1], p2 = (State) cyc[2], p3 = (State) cyc[3];
-		List<Long> history = new ArrayList<>();
-		history.add(ZobristHasher.fullHash(p0));
-		history.add(ZobristHasher.fullHash(p1));
-		history.add(ZobristHasher.fullHash(p2));
-		history.add(ZobristHasher.fullHash(p3));
+		PositionHistory history = new PositionHistory();
+		TestPositions.addTo(history, p0);
+		TestPositions.addTo(history, p1);
+		TestPositions.addTo(history, p2);
+		TestPositions.addTo(history, p3);
 		Evaluator ev = new SimpleEvaluator();
 		int before = failures;
 		long reps = 0;

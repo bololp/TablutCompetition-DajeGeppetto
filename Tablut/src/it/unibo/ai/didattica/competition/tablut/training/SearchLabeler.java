@@ -23,6 +23,7 @@ import it.unibo.ai.didattica.competition.tablut.domain.State.Pawn;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
 import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 import it.unibo.ai.didattica.competition.tablut.engine.Move;
 
 /**
@@ -135,7 +136,7 @@ public final class SearchLabeler {
 		}
 		Negamax ng = new Negamax(ev, depth, true, 1 << ttLog2, true, Negamax.ORDER_DEFAULT, 1, false);
 		ng.setSafetyMarginMillis(0);
-		int mv = ng.findBestMove(root, MAX_MS, new long[] { root.zobristHash }, 1);
+		int mv = ng.findBestMove(root, MAX_MS, PositionHistory.of(root));
 		if (mv == Move.NONE) {
 			throw new IllegalArgumentException("nessuna mossa legale");
 		}

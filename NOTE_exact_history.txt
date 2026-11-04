@@ -1,0 +1,57 @@
+STORIA DEGLI STATI A CHIAVE ESATTA (niente piu' hash Zobrist per la storia e per le ripetizioni)
+================================================================================================
+
+ORDINE: originale -> cache-and-order-rec.patch -> exact-key-tt.patch -> exact-history.patch   (patch -p1 < ... in quest'ordine)
+
+COSA CAMBIA
+  * Nuovo engine/PositionHistory: la storia e' una sequenza di chiavi ESATTE di FastState (key0,key1,key2 = scacchiera + turno, 3 long per
+    posizione, nessun oggetto per posizione). Due posizioni diverse hanno sempre chiavi diverse: nessuna collisione possibile.
+  * Sostituisce long[]/List<Long> di hash in TUTTE le firme. Le vecchie firme sono state RIMOSSE: chi usa ancora hash non compila piu',
+    invece di funzionare male in silenzio:
+      MoveSearcher.findBestMove(FastState, long, PositionHistory)   [era (FastState, long, long[], int)]
+      Negamax, Mcts, NegamaxSearcher, LegacyNegamax: findBestMove(State|FastState, long, PositionHistory), installForTest
+      TablutNegamaxClient (storia reale), GameTracker.history() (regola di ripetizione del training), SelfPlayTrainer/CnnSelfPlayTrainer
+      (Chooser), SearchArena, SearchLabeler, esperimenti.
+  * Rilevatori di ripetizione convertiti: Negamax (pila del cammino a 3 long/posizione, confronto sulle tre parole), Mcts (storia per worker,
+    ripetizione, riuso dell'albero che confronta le storie), LegacyNegamax (oracolo storico: solo la storia, la sua TT resta a hash),
+    GameTracker (regola di partita del training).
+  * Test: TestPositions.exactKey(State) calcola la chiave in modo INDIPENDENTE da FastState (oracolo); le storie dei test e gli oracoli di
+    PVSCheck, SearchOptimizationsCheck e SelfPlayRulesCheck usano quello.
+
+DOVE LO ZOBRIST RESTA (non e' storia degli stati)
+  TT di Negamax con exactkey=false (indice e identita'), indice della TT esatta, EvalCache dell'MCTS (cache di valutazioni, chiave hash, float),
+  TT del LegacyNegamax, FastState.hashCode()/hashOf(State), e i test che lo confrontano con quello storico. Con exactkey=true la TT e la cache
+  di Negamax identificano le posizioni con la chiave esatta.
+
+TEST ESEGUITI (JDK 21, 1 core, bytecode -source/-target 8; dalla copia con le tre patch applicate)
+  Nuovi:
+    HistoryExactnessCheck, 46.567 verifiche: contratto di PositionHistory; chiave incrementale == oracolo indipendente su 18.404 coppie
+      posizione/mossa (976 catture, 43 terminali); storie costruite come il client == oracolo su 1.992 posizioni di 25 partite; 800 collisioni
+      di hash forzate mai scambiate; pila di storia del cammino di Negamax; storia del chiamante non modificata (anche con Lazy SMP); riuso
+      dell'albero MCTS solo con stessa posizione E stessa storia; per riflessione nessuna API con storie a hash.
+    ClientHistoryIntegrationCheck: client REALE contro un finto server su localhost (porta 5800 libera), 33 turni confrontati con l'oracolo,
+      5 subito dopo un azzeramento per cattura.
+  Aggiornati con collisioni di hash forzate: RepetitionAndStalemateCheck (Negamax), MctsSearchCheck (MCTS, alla radice e dentro l'albero),
+    SearchEquivalenceCheck (+488 verifiche su posizioni rade d5/d6: 22.718 ripetizioni confrontate con LegacyNegamax, anche contro antenati
+    del cammino).
+  Tutti i 32 test del progetto sono stati eseguiti sul codice convertito: passano, con DUE eccezioni PREESISTENTI identiche sull'originale:
+    SearchEquivalenceCheck: asserzione di copertura "troppe poche ricerche interrotte (53/80)" (dipende dalla velocita' della macchina);
+    MctsConcurrencyCheck: "almeno una rete verificata" (richiede pesi verificabili in pretrained_weights/); le sue altre verifiche passano.
+  Rieseguiti dalla copia con le patch applicate: i due nuovi, RepetitionAndStalemate, ExactKey, ExactKeyStack, CachingEvaluator, NegamaxClientArgs,
+    ClientDefaults, SelfPlayRules, MctsSearch, PVS, SearchEquivalence, NoAllocation, LazySmp, FastState (19.744.399 verifiche): OK (tranne il
+    fallimento preesistente indicato).
+  NON eseguiti: JVM 8 reale, 4 core reali, partite contro il server vero, Ant.
+
+MUTAZIONI (18 bug introdotti nelle parti convertite; 17 uccisi)
+  Uccisi: ripetizione che confronta solo k0 o ignora k2 (Negamax, Mcts, PositionHistory.contains/equals/endsWith/add), pila del cammino che non
+  salva k2, storia radice non caricata, normalizeHistory che modifica la storia del chiamante, riuso dell'albero che ignora la storia,
+  GameTracker senza ripetizione o senza azzeramento, client senza azzeramento o senza aggiunta. Tre sopravvivevano finche' non ho aggiunto test
+  mirati (pila del cammino, storia del chiamante, riuso dell'albero): erano lacune dei test, ora colmate.
+  SOPRAVVISSUTO: Negamax "la cattura non azzera il segmento di storia": mutante EQUIVALENTE (una posizione precedente a una cattura non puo'
+  ripresentarsi: azzerare il segmento e' solo un'ottimizzazione).
+  Errori miei nei test, corretti: profondita' 3 invece di 0 nel test di collisione di Negamax; aspettativa (-1,1) sbagliata nel test MCTS (la
+  storia contiene posizioni vere che creano ripetizioni legittime: il confronto corretto e' con una voce estranea).
+
+NON MISURATO
+  Il costo del confronto a tre parole invece di una nella scansione della storia (la scansione e' corta e il confronto esce alla prima parola
+  diversa): non ho rimisurato i nodi/s. I banchi in bench/ (KeyStackBench, CacheCompareBench) sono stati aggiornati alla nuova API e compilati.

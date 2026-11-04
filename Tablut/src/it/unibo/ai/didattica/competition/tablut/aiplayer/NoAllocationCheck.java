@@ -7,6 +7,7 @@ import java.util.Random;
 
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
 
 /**
@@ -74,13 +75,13 @@ public class NoAllocationCheck {
 			Evaluator legacyEv = evs[e] instanceof SimpleEvaluator ? new LegacySimpleEvaluator() : evs[e];
 			LegacyNegamax legacyWarm = new LegacyNegamax(legacyEv, depths[e], true, 1 << 18, true, Negamax.ORDER_DEFAULT);
 			for (State s : states) {
-				legacyWarm.findBestMove(s, 1_000_000L, new ArrayList<Long>());
+				legacyWarm.findBestMove(s, 1_000_000L, PositionHistory.empty());
 			}
 			LegacyNegamax legacy = new LegacyNegamax(legacyEv, depths[e], true, 1 << 18, true, Negamax.ORDER_DEFAULT);
 			long ln = 0;
 			long lb = bytes(alloc, mx);
 			for (State s : states) {
-				legacy.findBestMove(s, 1_000_000L, new ArrayList<Long>());
+				legacy.findBestMove(s, 1_000_000L, PositionHistory.empty());
 				ln += legacy.lastNodeCount;
 			}
 			double legacyPerNode = (double) (bytes(alloc, mx) - lb) / Math.max(1, ln);

@@ -12,6 +12,7 @@ import it.unibo.ai.didattica.competition.tablut.domain.State.Pawn;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
 import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
 import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 
 /**
  * Generatori di posizioni per i test. Usano SOLO il motore storico ({@link AshtonRules}, {@link ZobristHasher}), mai
@@ -120,22 +121,55 @@ public final class TestPositions {
 	public static final class Game {
 		/** Posizioni NON terminali visitate, nell'ordine. */
 		public final List<State> positions = new ArrayList<>();
-		/** Per ciascuna posizione, gli hash ({@code ZobristHasher}) delle posizioni dall'ultima cattura, ATTUALE INCLUSA (come fa il client). */
-		public final List<List<Long>> histories = new ArrayList<>();
+		/**
+		 * Per ciascuna posizione, le posizioni dall'ultima cattura, ATTUALE INCLUSA (come fa il client), come chiavi ESATTE calcolate
+		 * direttamente dallo {@link State} da {@link TestPositions#exactKey(State)} (mai da {@code FastState}: l'oracolo resta indipendente).
+		 */
+		public final List<PositionHistory> histories = new ArrayList<>();
+	}
+
+	/**
+	 * Chiave ESATTA di uno {@link State}, calcolata in modo INDIPENDENTE da {@code FastState}: 2 bit per cella (vuota o trono 0, Bianco 1, Nero 2,
+	 * Re 3) con la cella {@code sq = riga*9 + colonna} nel long {@code sq/32} a partire dal bit {@code 2*(sq%32)}, piu' il bit 34 del terzo long se
+	 * e' di turno il Nero e la partita non e' finita. {@code FastState.key0..key2} deve darne sempre lo stesso risultato.
+	 *
+	 * @return {@code {key0, key1, key2}}
+	 */
+	public static long[] exactKey(State s) {
+		final long[] k = new long[3];
+		final Pawn[][] board = s.getBoard();
+		for (int r = 0; r < 9; r++) {
+			for (int c = 0; c < 9; c++) {
+				final int sq = r * 9 + c;
+				final Pawn p = board[r][c];
+				final long code = p == Pawn.WHITE ? 1L : p == Pawn.BLACK ? 2L : p == Pawn.KING ? 3L : 0L;
+				k[sq / 32] |= code << (2 * (sq % 32));
+			}
+		}
+		if (s.getTurn() == Turn.BLACK) {
+			k[2] |= 1L << 34;
+		}
+		return k;
+	}
+
+	/** Accoda a {@code h} la posizione di {@code s} con la chiave esatta indipendente di {@link #exactKey(State)}. */
+	public static void addTo(PositionHistory h, State s) {
+		final long[] k = exactKey(s);
+		h.add(k[0], k[1], k[2]);
 	}
 
 	public static Game playGame(Random rnd, boolean greedy, int maxPlies) {
 		Game g = new Game();
 		State s = initial();
-		List<Long> history = new ArrayList<>();
-		history.add(ZobristHasher.fullHash(s));
+		PositionHistory history = new PositionHistory();
+		addTo(history, s);
 		for (int ply = 0; ply < maxPlies && !AshtonRules.isTerminal(s); ply++) {
 			List<Action> moves = AshtonRules.generateMoves(s);
 			if (moves.isEmpty()) {
 				break;
 			}
 			g.positions.add(s);
-			g.histories.add(new ArrayList<>(history));
+			g.histories.add(history.copy());
 			Action chosen = moves.get(rnd.nextInt(moves.size()));
 			if (greedy) {
 				for (int tries = 0; tries < 6; tries++) {
@@ -152,7 +186,7 @@ public final class TestPositions {
 				if (AshtonRules.wasCapture(s, next, chosen)) {
 					history.clear();
 				}
-				history.add(ZobristHasher.fullHash(next));
+				addTo(history, next);
 			}
 			s = next;
 		}

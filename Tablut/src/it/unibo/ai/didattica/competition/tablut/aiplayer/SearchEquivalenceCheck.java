@@ -8,8 +8,10 @@ import java.util.Random;
 import it.unibo.ai.didattica.competition.tablut.domain.Action;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
+import it.unibo.ai.didattica.competition.tablut.domain.State.Pawn;
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 import it.unibo.ai.didattica.competition.tablut.engine.Move;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
 
 /**
@@ -99,7 +101,7 @@ public class SearchEquivalenceCheck {
 					i = Math.min(n - 1, 2 + rnd.nextInt(4));
 				}
 				State s = game.positions.get(i);
-				List<Long> h = game.histories.get(i);
+				PositionHistory h = game.histories.get(i);
 				for (Cfg cfg : CFGS) {
 					int depth = cfg.tt ? 4 : 3;
 					compare("partita " + g + " ply " + i + " [" + cfg.name + "] Simple d" + depth, s, h, simpleNew, simpleOld, cfg, depth);
@@ -113,8 +115,8 @@ public class SearchEquivalenceCheck {
 		long before = comparisons;
 		for (int i = 0; i < randomPositions; i++) {
 			State s = TestPositions.randomPosition(rnd);
-			List<Long> h = new ArrayList<>();
-			h.add(FastState.hashOf(s));
+			PositionHistory h = new PositionHistory();
+			h.add(s);
 			for (Cfg cfg : CFGS) {
 				compare("casuale " + i + " [" + cfg.name + "] d" + (cfg.tt ? 4 : 3), s, h, simpleNew, simpleOld, cfg, cfg.tt ? 4 : 3);
 			}
@@ -132,6 +134,9 @@ public class SearchEquivalenceCheck {
 		timeoutPollution(rnd, simpleNew, net);
 		timedSearches(rnd, simpleNew, net);
 		apiConsistency(rnd, simpleNew);
+
+		// ---- 5) posizioni RADE a profondita' maggiore: i cicli nel cammino di ricerca (ripetizioni contro un antenato che non e' la radice)
+		sparseDeepPositions(rnd, simpleNew, simpleOld);
 
 		System.out.println("Ripetizioni incontrate dalla ricerca nei confronti: " + repetitionsSeen);
 		check(comparisons > 200, "copertura: confronti troppo pochi (" + comparisons + ")");
@@ -157,7 +162,7 @@ public class SearchEquivalenceCheck {
 		return a.getFrom().equals(b.getFrom()) && a.getTo().equals(b.getTo()) && a.getTurn() == b.getTurn();
 	}
 
-	private static void compare(String label, State root, List<Long> hist, Evaluator evNew, Evaluator evOld, Cfg cfg, int depth) {
+	private static void compare(String label, State root, PositionHistory hist, Evaluator evNew, Evaluator evOld, Cfg cfg, int depth) {
 		LegacyNegamax legacy = new LegacyNegamax(evOld, depth, cfg.tt, 1 << 14, cfg.pvs, cfg.order);
 		Negamax fresh = new Negamax(evNew, depth, cfg.tt, 1 << 14, cfg.pvs, cfg.order, 1);
 
@@ -206,13 +211,58 @@ public class SearchEquivalenceCheck {
 	 * invecchiamento) e il resto dello stato persistono tra una ricerca e la successiva, come nel client reale. Le due istanze
 	 * devono scegliere sempre la stessa mossa con gli stessi numeri; la partita prosegue con la mossa comune.
 	 */
+	/**
+	 * Posizioni con il solo re, due bianchi e due neri (molto poche mosse e molti cicli di 4 semi-mosse), a profondita' 5 e 6: un ciclo che non passa
+	 * dalla radice ripete una posizione GIA' VISITATA SUL CAMMINO (non nella storia reale) al quinto semi-passo. {@link #compare} confronta con
+	 * {@link LegacyNegamax} (storia a chiavi esatte anche sul cammino) mossa, punteggio, nodi e numero di ripetizioni incontrate: un rilevatore che non
+	 * riconoscesse le posizioni del cammino darebbe un numero di ripetizioni (e di nodi) diverso.
+	 */
+	private static void sparseDeepPositions(Random rnd, Evaluator simpleNew, Evaluator simpleOld) {
+		final long before = repetitionsSeen;
+		int used = 0;
+		for (int i = 0; i < 400 && used < 30; i++) {
+			final State st = TestPositions.randomPosition(rnd);
+			final Pawn[][] b = st.getBoard();
+			int whites = 0, blacks = 0;
+			for (int r = 0; r < 9; r++) {
+				for (int c = 0; c < 9; c++) {
+					final Pawn p = b[r][c];
+					if (p == Pawn.WHITE && whites++ >= 2) {
+						b[r][c] = Pawn.EMPTY;
+					} else if (p == Pawn.BLACK && blacks++ >= 2) {
+						b[r][c] = Pawn.EMPTY;
+					}
+				}
+			}
+			if (b[4][4] != Pawn.KING) {
+				b[4][4] = Pawn.THRONE;
+			}
+			final FastState f = FastState.fromState(st);
+			if (f.isGameOver()) {
+				continue;
+			}
+			final PositionHistory h = new PositionHistory();
+			h.add(st);
+			compare("rada " + i + " d5", st, h, simpleNew, simpleOld, CFGS[0], 5);
+			if (used < 12) {
+				compare("rada " + i + " d6", st, h, simpleNew, simpleOld, CFGS[0], 6);
+				compare("rada " + i + " d6 senza TT", st, h, simpleNew, simpleOld, CFGS[1], 6);
+			}
+			used++;
+		}
+		final long events = repetitionsSeen - before;
+		System.out.println("Posizioni rade (d5/d6): " + used + " posizioni, ripetizioni incontrate: " + events);
+		check(used >= 20, "copertura: poche posizioni rade valide (" + used + ")");
+		check(events > 200, "copertura: poche ripetizioni incontrate nelle posizioni rade (" + events + ")");
+	}
+
 	private static void reusedInstanceGame(Random rnd, Evaluator simpleNew, Evaluator simpleOld, int g) {
 		LegacyNegamax legacy = new LegacyNegamax(simpleOld, 3, true, 1 << 13, true, Negamax.ORDER_DEFAULT);
 		Negamax fresh = new Negamax(simpleNew, 3, true, 1 << 13, true, Negamax.ORDER_DEFAULT, 1);
 		TestPositions.Game script = TestPositions.playGame(rnd, true, 40); // fornisce solo una linea di partenza realistica
 		State s = TestPositions.initial();
-		List<Long> history = new ArrayList<>();
-		history.add(FastState.hashOf(s));
+		PositionHistory history = new PositionHistory();
+		history.add(s);
 		int played = 0;
 		for (int ply = 0; ply < 40; ply++) {
 			Action expected = legacy.findBestMove(s, BIG_BUDGET, history);
@@ -236,7 +286,7 @@ public class SearchEquivalenceCheck {
 			if (AshtonRules.wasCapture(s, next, play)) {
 				history.clear();
 			}
-			history.add(FastState.hashOf(next));
+			history.add(next);
 			s = next;
 			played++;
 		}
@@ -270,8 +320,8 @@ public class SearchEquivalenceCheck {
 		b[8][8] = it.unibo.ai.didattica.competition.tablut.domain.State.Pawn.BLACK;
 		b[1][1] = it.unibo.ai.didattica.competition.tablut.domain.State.Pawn.WHITE; // una pedina libera di muoversi senza sbloccare il Nero
 		white.setTurn(Turn.WHITE);
-		List<Long> h = new ArrayList<>();
-		h.add(FastState.hashOf(white));
+		PositionHistory h = new PositionHistory();
+		h.add(white);
 		for (Cfg cfg : CFGS) {
 			compare("stallo del Nero (Bianco muove) [" + cfg.name + "] d3", white, h, evNew, evOld, cfg, 3);
 			compare("stallo del Nero (Bianco muove) [" + cfg.name + "] d4", white, h, evNew, evOld, cfg, 4);
@@ -288,8 +338,8 @@ public class SearchEquivalenceCheck {
 		c[8][7] = it.unibo.ai.didattica.competition.tablut.domain.State.Pawn.BLACK;
 		c[1][1] = it.unibo.ai.didattica.competition.tablut.domain.State.Pawn.BLACK; // pedina nera libera
 		black.setTurn(Turn.BLACK);
-		h = new ArrayList<>();
-		h.add(FastState.hashOf(black));
+		h = new PositionHistory();
+		h.add(black);
 		for (Cfg cfg : CFGS) {
 			compare("stallo del Bianco (Nero muove) [" + cfg.name + "] d3", black, h, evNew, evOld, cfg, 3);
 		}
@@ -320,7 +370,7 @@ public class SearchEquivalenceCheck {
 			for (int k = 0; k < 8 && !game.positions.isEmpty(); k++) {
 				int i = rnd.nextInt(game.positions.size());
 				State s = game.positions.get(i);
-				List<Long> h = game.histories.get(i);
+				PositionHistory h = game.histories.get(i);
 				boolean useNet = (k & 1) == 1;
 				Evaluator ev = useNet ? net : simple;
 				int depth = useNet ? 3 : 4;
@@ -360,7 +410,7 @@ public class SearchEquivalenceCheck {
 			for (int k = 0; k < 6 && !game.positions.isEmpty(); k++) {
 				int i = rnd.nextInt(game.positions.size());
 				State s = game.positions.get(i);
-				List<Long> h = game.histories.get(i);
+				PositionHistory h = game.histories.get(i);
 				FastState before = FastState.fromState(s);
 				boolean useNet = (k & 1) == 1;
 				// budget da 1 a 120 ms: il tempo scade in punti qualsiasi dell'albero
@@ -399,7 +449,7 @@ public class SearchEquivalenceCheck {
 			for (int k = 0; k < 4 && !game.positions.isEmpty(); k++) {
 				int i = rnd.nextInt(game.positions.size());
 				State s = game.positions.get(i);
-				List<Long> h = game.histories.get(i);
+				PositionHistory h = game.histories.get(i);
 				Negamax a = new Negamax(simple, 3, true, 1 << 13, true, Negamax.ORDER_DEFAULT, 1);
 				Negamax b = new Negamax(simple, 3, true, 1 << 13, true, Negamax.ORDER_DEFAULT, 1);
 				Negamax c = new Negamax(simple, 3, true, 1 << 13, true, Negamax.ORDER_DEFAULT, 1);
@@ -407,14 +457,11 @@ public class SearchEquivalenceCheck {
 				FastState root = FastState.fromState(s);
 				FastState copy = root.duplicate();
 				int viaFastList = b.findBestMove(root, BIG_BUDGET, h);
-				long[] arr = new long[h.size() + 3]; // capienza maggiore della lunghezza: conta historyLen, non arr.length
-				for (int j = 0; j < h.size(); j++) {
-					arr[j] = h.get(j);
-				}
-				Arrays.fill(arr, h.size(), arr.length, 0x5EEDL);
-				int viaFastArray = c.findBestMove(root, BIG_BUDGET, arr, h.size());
+				PositionHistory spare = new PositionHistory(h.size() + 3); // capienza maggiore della lunghezza: conta la lunghezza, non la capienza
+				spare.addAll(h);
+				int viaFastArray = c.findBestMove(root, BIG_BUDGET, spare);
 				check(viaState != null && Move.fromAction(viaState) == viaFastList && viaFastList == viaFastArray,
-						"API: State=" + viaState + " FastState(List)=" + Move.toString(viaFastList) + " FastState(long[])=" + Move.toString(viaFastArray));
+						"API: State=" + viaState + " FastState=" + Move.toString(viaFastList) + " FastState(capienza maggiore)=" + Move.toString(viaFastArray));
 				check(root.samePosition(copy) && root.zobristHash == copy.zobristHash, "API: la FastState passata e' stata modificata");
 				check(viaState == null || viaState.getTurn() == s.getTurn(), "API: il turno dell'Action coincide con quello della radice");
 				check(a.lastNodeCount == b.lastNodeCount && b.lastNodeCount == c.lastNodeCount, "API: nodi diversi tra le tre forme");

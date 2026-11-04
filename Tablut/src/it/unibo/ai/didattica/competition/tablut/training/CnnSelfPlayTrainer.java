@@ -28,6 +28,7 @@ import it.unibo.ai.didattica.competition.tablut.domain.Action;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
 import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 
 /**
  * Allena un {@link CnnEvaluator} con self-play e TD(lambda) semi-gradiente: LO STESSO schema di {@link SelfPlayTrainer} (TD-Gammon,
@@ -347,7 +348,7 @@ public class CnnSelfPlayTrainer {
 			};
 			SelfPlayTrainer.MoveChooser chooser = new SelfPlayTrainer.MoveChooser() {
 				@Override
-				public Action choose(State s, List<Long> history) {
+				public Action choose(State s, PositionHistory history) {
 					List<Action> legal = AshtonRules.generateMoves(s);
 					long budget = minMoveMs + (maxMoveMs > minMoveMs ? Math.abs(rnd.nextLong() % (maxMoveMs - minMoveMs + 1)) : 0);
 					Action move;

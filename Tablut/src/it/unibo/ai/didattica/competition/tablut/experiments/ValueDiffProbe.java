@@ -1,12 +1,12 @@
 package it.unibo.ai.didattica.competition.tablut.experiments;
 
-import java.util.ArrayList;
 import java.util.List;
 
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Negamax;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.OrderingSpec;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.SimpleEvaluator;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 
 /**
  * Per le posizioni di {@link OrderingBench} in cui il valore di radice a profondita' fissa (TT accesa, istanza nuova) dipende
@@ -48,7 +48,7 @@ public class ValueDiffProbe {
 
 	static double value(SimpleEvaluator ev, int depth, boolean tt, int order, State s) {
 		Negamax n = new Negamax(ev, depth, tt, 1 << 20, true, order, 1, false).setThreads(1);
-		n.findBestMove(s, 100_000_000L, new ArrayList<Long>());
+		n.findBestMove(s, 100_000_000L, PositionHistory.empty());
 		return n.lastScore;
 	}
 }

@@ -8,6 +8,7 @@ import it.unibo.ai.didattica.competition.tablut.aiplayer.SimpleEvaluator;
 import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 import it.unibo.ai.didattica.competition.tablut.engine.Move;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 
 /**
  * Misure di costo dell'{@link Mcts} (non e' un test: stampa numeri).
@@ -56,17 +57,17 @@ public final class MctsBench {
 		final boolean doMemory = only.isEmpty() || only.equals("memory");
 		final boolean doCache = only.isEmpty() || only.equals("cache");
 		final FastState start = FastState.fromState(new StateTablut());
-		final long[] hist = { start.zobristHash };
+		final PositionHistory hist = PositionHistory.of(start);
 
 		System.out.println("== throughput dalla posizione iniziale (1000 ms per misura, margine 0) ==");
 		for (int e = 0; doThroughput && e < evals.size(); e++) {
 			for (String cfg : new String[] { "expand=1", "expand=0", "expand=1,cache=0" }) {
 				for (int threads : new int[] { 1, 2 }) {
 					final Mcts m = new Mcts(evals.get(e), MctsConfig.parse(cfg + ",reuse=false"), threads).setSafetyMarginMillis(0);
-					m.findBestMove(start, 300, hist, 1); // riscaldamento del JIT
+					m.findBestMove(start, 300, hist); // riscaldamento del JIT
 					m.clearTree();
 					final long t0 = System.nanoTime();
-					final int mv = m.findBestMove(start, 1000, hist, 1);
+					final int mv = m.findBestMove(start, 1000, hist);
 					final double s = (System.nanoTime() - t0) / 1e9;
 					final long total = m.lastEvals + m.lastCacheHits;
 					System.out.printf("%-8s %-18s thread=%d: %8.0f sim/s  %9.0f valutazioni/s (+%2.0f%% dalla cache)  %7d nodi  mossa=%s%n", names.get(e), cfg, threads, m.lastSims / s,
@@ -82,7 +83,7 @@ public final class MctsBench {
 				final long n = 60_000;
 				final Mcts m = new Mcts(evals.get(e), MctsConfig.parse(cfg + ",reuse=false,cache=0,maxnodes=" + n), 1).setSafetyMarginMillis(0);
 				final long before = usedHeap();
-				m.findBestMove(start, 600000, hist, 1);
+				m.findBestMove(start, 600000, hist);
 				final long after = usedHeap();
 				final long nodes = m.lastNodes;
 				System.out.printf("%-8s %-18s: %d nodi, %.1f MB -> %.0f byte/nodo (sim %d)%n", names.get(e), cfg, nodes, (after - before) / 1048576.0, nodes > 0 ? (double) (after - before) / nodes : 0.0,
@@ -113,7 +114,7 @@ public final class MctsBench {
 						final Mcts m = new Mcts(evals.get(e), MctsConfig.parse("expand=1,reuse=false,cache=" + log2), 1).setSafetyMarginMillis(0);
 						m.setMaxSims(sims);
 						final long t0 = System.nanoTime();
-						m.findBestMove(p, 600000, new long[] { p.zobristHash }, 1);
+						m.findBestMove(p, 600000, PositionHistory.of(p));
 						t += (System.nanoTime() - t0) / 1e6;
 						hits += m.lastCacheHits;
 						total += m.lastCacheHits + m.lastEvals;

@@ -26,6 +26,7 @@ import it.unibo.ai.didattica.competition.tablut.domain.Action;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
 import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 
 /**
  * Allena {@link NeuralEvaluator} tramite self-play e TD(lambda) semi-gradient
@@ -443,7 +444,7 @@ public class SelfPlayTrainer {
 
 	/** Sceglie la mossa. {@code historySinceLastCapture} va passata alla ricerca (si veda {@link GameTracker#history()}). */
 	interface MoveChooser {
-		Action choose(State state, List<Long> historySinceLastCapture);
+		Action choose(State state, PositionHistory historySinceLastCapture);
 	}
 
 	/** Risultato di {@link #playGame}. */
@@ -586,7 +587,7 @@ public class SelfPlayTrainer {
 			};
 			MoveChooser chooser = new MoveChooser() {
 				@Override
-				public Action choose(State s, List<Long> historySinceLastCapture) {
+				public Action choose(State s, PositionHistory historySinceLastCapture) {
 					List<Action> legalMoves = AshtonRules.generateMoves(s);
 					long budget = minMoveMs + (maxMoveMs > minMoveMs ? rnd.nextLong() % (maxMoveMs - minMoveMs + 1) : 0);
 					if (budget < 0) {

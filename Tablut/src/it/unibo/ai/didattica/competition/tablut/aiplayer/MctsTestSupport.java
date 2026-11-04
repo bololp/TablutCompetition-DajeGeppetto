@@ -8,6 +8,7 @@ import java.util.Random;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 import it.unibo.ai.didattica.competition.tablut.engine.UndoInfo;
 import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
 
@@ -63,6 +64,29 @@ final class MctsTestSupport {
 		return false;
 	}
 
+	/**
+	 * Posizioni DIVERSE da {@code p} ma con lo stesso {@code zobristHash} (collisione FORZATA): una cella cambiata in ciascuno dei tre
+	 * long della chiave esatta (celle 5, 37 e 70) e il turno invertito. Una storia che identificasse le posizioni con l'hash le
+	 * scambierebbe per {@code p}; una storia a chiave esatta no. Le chiavi sono ricalcolate (ogni variante ha la propria chiave).
+	 */
+	static FastState[] collidingVariants(FastState p) {
+		final int[] squares = { 5, 37, 70 };
+		final FastState[] out = new FastState[squares.length + 1];
+		for (int i = 0; i < squares.length; i++) {
+			final FastState v = p.duplicate();
+			v.board[squares[i]] = v.board[squares[i]] == BoardConstants.EMPTY ? BoardConstants.BLACK : BoardConstants.EMPTY;
+			v.computeKeys();
+			v.zobristHash = p.zobristHash; // collisione forzata
+			out[i] = v;
+		}
+		final FastState t = p.duplicate();
+		t.turn = (byte) (t.turn ^ 1);
+		t.computeKeys();
+		t.zobristHash = p.zobristHash; // collisione forzata
+		out[squares.length] = t;
+		return out;
+	}
+
 	static int indexOfMove(Mcts.Node n, int move) {
 		if (n == null) {
 			return -1;
@@ -79,9 +103,9 @@ final class MctsTestSupport {
 		return a.samePosition(b) && a.zobristHash == b.zobristHash && a.winner == b.winner && Arrays.equals(a.board, b.board);
 	}
 
-	/** Storia (hash Zobrist) con la sola radice: quella che il client passerebbe a inizio partita. */
-	static long[] rootOnly(FastState s) {
-		return new long[] { s.zobristHash };
+	/** Storia (chiavi esatte) con la sola radice: quella che il client passerebbe a inizio partita. */
+	static PositionHistory rootOnly(FastState s) {
+		return PositionHistory.of(s);
 	}
 
 	static String[] keysOf(FastState s) {
