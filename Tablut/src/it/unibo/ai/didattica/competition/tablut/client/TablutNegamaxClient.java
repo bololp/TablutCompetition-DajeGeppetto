@@ -5,7 +5,10 @@ import java.net.UnknownHostException;
 
 import it.unibo.ai.didattica.competition.tablut.aiplayer.CachingEvaluator;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Evaluator;
+import it.unibo.ai.didattica.competition.tablut.aiplayer.CnnEvaluator;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.EvaluatorLoader;
+import it.unibo.ai.didattica.competition.tablut.aiplayer.NeuralEvaluator;
+import it.unibo.ai.didattica.competition.tablut.aiplayer.NnueEvaluator;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.ExactTranspositionTable;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Mcts;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.MctsConfig;
@@ -133,6 +136,60 @@ public class TablutNegamaxClient extends TablutClient {
 				.setSafetyMarginMillis(margin));
 	}
 
+	static boolean isKnownEvalBackend(String name) {
+		return name.equals("auto") || name.equals("simple") || name.equals("mlp") || name.equals("cnn") || name.equals("nnue");
+	}
+
+	/**
+	 * Sceglie il valutatore secondo {@code eval=} e il file di pesi.
+	 * <ul>
+	 * <li>{@code auto}: comportamento storico. Senza pesi, o se il file non si carica, {@link SimpleEvaluator} (con un avviso); il tipo di
+	 * rete (NNUE, CNN, MLP) e' riconosciuto dall'intestazione del file. Non lancia mai.</li>
+	 * <li>{@code simple}: {@link SimpleEvaluator}; un eventuale file di pesi e' ignorato (con un avviso).</li>
+	 * <li>{@code mlp}, {@code cnn}, {@code nnue}: esplicito e severo. Richiede il file, lo carica e verifica che sia del tipo richiesto.</li>
+	 * </ul>
+	 *
+	 * @throws IOException solo nelle modalita' esplicite: pesi mancanti, file illeggibile o non valido, tipo diverso da quello richiesto
+	 */
+	static Evaluator selectEvaluator(String backend, String weightsFile) throws IOException {
+		if (backend.equals("simple")) {
+			if (weightsFile != null) {
+				System.out.println("ATTENZIONE: eval=simple: il file di pesi '" + weightsFile + "' e' ignorato.");
+			}
+			return new SimpleEvaluator();
+		}
+		if (backend.equals("auto")) {
+			Evaluator evaluator = new SimpleEvaluator();
+			if (weightsFile != null) {
+				try {
+					evaluator = EvaluatorLoader.load(weightsFile); // NNUE, CNN o MLP, riconosciuto dall'intestazione del file
+					System.out.println("Valutazione: " + EvaluatorLoader.describe(evaluator) + ", pesi caricati da " + weightsFile);
+				} catch (IOException e) {
+					System.out.println("ATTENZIONE: impossibile caricare i pesi da '" + weightsFile + "' (" + e.getMessage() + "). Uso SimpleEvaluator.");
+				}
+			} else {
+				System.out.println("Nessun file di pesi indicato: uso SimpleEvaluator.");
+			}
+			return evaluator;
+		}
+		if (weightsFile == null) {
+			throw new IOException("eval=" + backend + " richiede un file di pesi, ma non ne e' stato indicato nessuno");
+		}
+		final Evaluator evaluator;
+		try {
+			evaluator = EvaluatorLoader.load(weightsFile);
+		} catch (IOException e) {
+			throw new IOException("eval=" + backend + ": impossibile caricare i pesi da '" + weightsFile + "' (" + e.getMessage() + ")", e);
+		}
+		final boolean matches = backend.equals("nnue") ? evaluator instanceof NnueEvaluator
+				: backend.equals("cnn") ? evaluator instanceof CnnEvaluator : evaluator instanceof NeuralEvaluator;
+		if (!matches) {
+			throw new IOException("eval=" + backend + ": il file '" + weightsFile + "' contiene un altro tipo di rete (" + EvaluatorLoader.describe(evaluator) + ")");
+		}
+		System.out.println("Valutazione: " + EvaluatorLoader.describe(evaluator) + ", pesi caricati da " + weightsFile);
+		return evaluator;
+	}
+
 	/**
 	 * Avvolge {@code evaluator} in una {@link CachingEvaluator} di 2^log2 voci (ridotta se supera un ottavo dell'heap) SOLO se l'algoritmo e'
 	 * Negamax (l'MCTS ha la sua {@code EvalCache}), {@code log2 > 0} e l'evaluator e' una rete (MLP/CNN: con {@link SimpleEvaluator} la cache non
@@ -216,7 +273,11 @@ public class TablutNegamaxClient extends TablutClient {
 	 * Gli argomenti facoltativi (la competizione li permette, si veda
 	 * slide 20: "Your player can have additional optional parameters") possono comparire in
 	 * qualunque ordine dopo l'IP: un file di pesi e/o {@code threads=N}. Senza pesi, o se il file non si
-	 * carica correttamente, si usa {@link SimpleEvaluator}. Senza {@code threads=N} i thread di ricerca
+	 * carica correttamente, si usa {@link SimpleEvaluator} (comportamento {@code eval=auto}, il default).
+	 * {@code eval=auto|simple|mlp|cnn|nnue} sceglie il valutatore ({@link #selectEvaluator}): {@code auto} riconosce il tipo dall'intestazione
+	 * del file di pesi (NNUE, CNN o MLP); {@code simple} ignora i pesi; {@code mlp}, {@code cnn} e {@code nnue} sono ESPLICITI e severi: se
+	 * il file manca, non e' valido o non e' del tipo richiesto il client si ferma con un errore invece di giocare con un altro valutatore.
+	 * L'NNUE e' valutato in modo incrementale da Negamax (mai con la cache delle valutazioni) e per intero da MCTS. Senza {@code threads=N} i thread di ricerca
 	 * (Lazy SMP) sono {@link Negamax#defaultThreads()}: 4 su una macchina a 4 core (o la proprieta' di
 	 * sistema {@code -Dtablut.threads=N}); {@code threads=1} = ricerca a thread singolo.
 	 */
@@ -251,6 +312,7 @@ public class TablutNegamaxClient extends TablutClient {
 		String weightsFile = null;
 		String algo = System.getProperty("tablut.algo", "negamax");
 		String mctsSpec = "";
+		String evalBackend = "auto";
 		for (int i = 3; i < args.length; i++) {
 			final String low = args[i].toLowerCase();
 			try {
@@ -273,6 +335,8 @@ public class TablutNegamaxClient extends TablutClient {
 					marginGiven = true;
 				} else if (low.startsWith("algo=")) {
 					algo = normalizeAlgo(args[i].substring("algo=".length())); // lancia se sconosciuto: l'algoritmo resta quello di prima
+				} else if (low.startsWith("eval=")) {
+					evalBackend = args[i].substring("eval=".length()).trim().toLowerCase(); // validato dopo il ciclo: un nome sbagliato NON si ignora
 				} else if (low.startsWith("mcts=")) {
 					final String spec = args[i].substring("mcts=".length()).trim();
 					MctsConfig.parse(spec); // solo per validarla: lancia se non valida (allora mctsSpec resta quella di prima)
@@ -307,17 +371,18 @@ public class TablutNegamaxClient extends TablutClient {
 			ttLog2 = fitted;
 		}
 
-		Evaluator evaluator = new SimpleEvaluator();
-		if (weightsFile != null) {
-			try {
-				evaluator = EvaluatorLoader.load(weightsFile); // MLP o CNN, riconosciuto dall'intestazione del file
-				System.out.println("Valutazione: " + EvaluatorLoader.describe(evaluator) + ", pesi caricati da " + weightsFile);
-			} catch (IOException e) {
-				System.out.println("ATTENZIONE: impossibile caricare i pesi da '" + weightsFile + "' ("
-						+ e.getMessage() + "). Uso SimpleEvaluator.");
-			}
-		} else {
-			System.out.println("Nessun file di pesi indicato: uso SimpleEvaluator.");
+		if (!isKnownEvalBackend(evalBackend)) {
+			System.out.println("ERRORE: eval='" + evalBackend + "' sconosciuto (valori ammessi: auto, simple, mlp, cnn, nnue).");
+			System.exit(-1);
+			return;
+		}
+		Evaluator evaluator;
+		try {
+			evaluator = selectEvaluator(evalBackend, weightsFile);
+		} catch (IOException e) { // solo per eval=mlp|cnn|nnue: la scelta esplicita non ripiega mai su un altro valutatore
+			System.out.println("ERRORE: " + e.getMessage());
+			System.exit(-1);
+			return;
 		}
 
 		// cache delle valutazioni: solo Negamax con una rete (si veda withEvalCache). Il decoratore e' creato QUI, subito dopo il

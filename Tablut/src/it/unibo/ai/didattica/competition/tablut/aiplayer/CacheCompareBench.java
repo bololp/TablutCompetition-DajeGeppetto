@@ -1,10 +1,10 @@
 package it.unibo.ai.didattica.competition.tablut.aiplayer;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 
 import it.unibo.ai.didattica.competition.tablut.engine.FastState;
 import it.unibo.ai.didattica.competition.tablut.engine.Move;
+import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
 import it.unibo.ai.didattica.competition.tablut.engine.UndoInfo;
 
 /**
@@ -42,18 +42,14 @@ public class CacheCompareBench {
 		FastState cur = new FastState();
 		Evaluator[] ev = { make(mode, base), make(mode, base) };
 		Negamax[] nm = { new Negamax(ev[0], depth, true, 1 << 22, true, order, 1), new Negamax(ev[1], depth, true, 1 << 22, true, order, 1) };
-		ArrayList<Long> hist = new ArrayList<>();
-		hist.add(cur.zobristHash);
+		PositionHistory hist = new PositionHistory();
+		hist.add(cur);
 		int ply = 0;
 		long nodes = 0, sum = 0;
 		final long t0 = System.nanoTime();
 		while (!cur.isGameOver() && ply < maxPly) {
 			int side = cur.turn;
-			long[] h = new long[hist.size()];
-			for (int i = 0; i < h.length; i++) {
-				h[i] = hist.get(i);
-			}
-			int mv = nm[side].findBestMove(cur, 1_000_000_000L, h, h.length);
+			int mv = nm[side].findBestMove(cur, 1_000_000_000L, hist);
 			if (mv == Move.NONE) {
 				break;
 			}
@@ -64,7 +60,7 @@ public class CacheCompareBench {
 			if (cur.whiteCount + cur.blackCount < before) {
 				hist.clear();
 			}
-			hist.add(cur.zobristHash);
+			hist.add(cur);
 			ply++;
 		}
 		final double secs = (System.nanoTime() - t0) / 1e9;

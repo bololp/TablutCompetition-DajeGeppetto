@@ -226,6 +226,12 @@ public class Negamax {
 	public static final int DEFAULT_TT_SIZE = 1 << 22;
 
 	private final Evaluator evaluator;
+	/**
+	 * Stato incrementale di valutazione di QUESTO worker (NNUE), oppure {@code null} se l'evaluator non e' incrementale. Come gli
+	 * stack di {@code UndoInfo} e di mosse e' indicizzato dal ply ({@code sp}) e privato dell'istanza: gli helper Lazy SMP ne hanno uno
+	 * proprio e condividono con il principale soltanto l'evaluator (immutabile) e la transposition table.
+	 */
+	private final IncrementalEvaluator.Session inc;
 	private final int maxDepth;
 	private final boolean useTT;
 	private final boolean usePVS;
@@ -376,6 +382,7 @@ public class Negamax {
 	public Negamax(Evaluator evaluator, int maxDepth, boolean useTT, int ttSize, boolean usePVS, int orderingMode,
 			int threads, boolean twoSlotTT, TranspositionTable table) {
 		this.evaluator = evaluator;
+		this.inc = evaluator instanceof IncrementalEvaluator ? ((IncrementalEvaluator) evaluator).newSession(maxDepth + 3) : null;
 		this.maxDepth = maxDepth;
 		this.useTT = useTT;
 		this.usePVS = usePVS;
@@ -391,6 +398,7 @@ public class Negamax {
 	/** Costruttore degli helper Lazy SMP: stessa configurazione e STESSA transposition table del principale, stato di ricerca proprio. */
 	private Negamax(Negamax main) {
 		this.evaluator = main.evaluator;
+		this.inc = main.evaluator instanceof IncrementalEvaluator ? ((IncrementalEvaluator) main.evaluator).newSession(main.maxDepth + 3) : null;
 		this.maxDepth = main.maxDepth;
 		this.useTT = main.useTT;
 		this.usePVS = main.usePVS;
@@ -575,6 +583,9 @@ public class Negamax {
 
 		final FastState s = st;
 		s.copyFrom(rootState); // posizione di lavoro privata di questo worker: la ricerca la muta e la ripristina
+		if (inc != null) {
+			inc.reset(s); // la radice e' l'unico punto in cui l'accumulatore si ricostruisce da zero
+		}
 		final int[] rootMoves = moveStack[0];
 		final int nRoot = s.generateMoves(rootMoves);
 		rootMoveCountForTest = nRoot;
@@ -682,6 +693,9 @@ public class Negamax {
 		final UndoInfo u = undoStack[sp];
 		prevMoveAt[sp + 1] = Move.index(move);
 		s.makeMove(move, u);
+		if (inc != null) {
+			inc.push(sp + 1, move, s, u); // registra la differenza di feature; l'unmake non richiede nulla (i frame sono una pila)
+		}
 		// chiave ESATTA della posizione figlia (non l'hash): una ripetizione e' riconosciuta solo se la posizione e' davvero la stessa
 		final long k0 = s.key0, k1 = s.key1, k2 = s.key2;
 		double score;
@@ -786,7 +800,7 @@ public class Negamax {
 		}
 
 		if (depth == 0) {
-			return perspective * evaluator.evaluate(s);
+			return perspective * (inc != null ? inc.evaluate(sp, s) : evaluator.evaluate(s));
 		}
 
 		final int[] moves = moveStack[sp];
@@ -1105,6 +1119,42 @@ public class Negamax {
 
 	// ------------------------------------------------------------------------------------------ hook per i test
 
+	/** Hook di test: la sessione incrementale di questo worker ({@code null} se l'evaluator non e' incrementale). */
+	IncrementalEvaluator.Session incrementalSessionForTest() {
+		return inc;
+	}
+
+	/** Hook di test: quante sessioni incrementali DISTINTE hanno questo worker e i suoi helper (una per worker: mai condivise). */
+	int incrementalSessionsForTest() {
+		final java.util.Set<Object> distinct = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Object, Boolean>());
+		if (inc != null) {
+			distinct.add(inc);
+		}
+		final Negamax[] hs = helpers;
+		if (hs != null) {
+			for (Negamax h : hs) {
+				if (h != null && h.inc != null) {
+					distinct.add(h.inc);
+				}
+			}
+		}
+		return distinct.size();
+	}
+
+	/** Hook di test: ricostruzioni di ripiego di TUTTE le sessioni incrementali (questo worker e i suoi helper); 0 se non e' incrementale. */
+	long incrementalFallbacksForTest() {
+		long n = inc != null ? inc.fallbackRebuilds() : 0;
+		final Negamax[] hs = helpers;
+		if (hs != null) {
+			for (Negamax h : hs) {
+				if (h != null && h.inc != null) {
+					n += h.inc.fallbackRebuilds();
+				}
+			}
+		}
+		return n;
+	}
+
 	/**
 	 * Hook di test (white-box): installa {@code position} (copiata) come posizione di lavoro e {@code history} come storia
 	 * di ripetizione, e prepara gli stack per una discesa di {@code depth} ply. Dopo di questo si possono chiamare
@@ -1113,6 +1163,9 @@ public class Negamax {
 	void installForTest(FastState position, PositionHistory history, int depth) {
 		allocStacks(depth + 4);
 		st.copyFrom(position);
+		if (inc != null) {
+			inc.reset(st);
+		}
 		ensureHist(history.size() + depth + 8);
 		histLen = history.copyKeysTo(histKeys, 0);
 		histBase = 0;

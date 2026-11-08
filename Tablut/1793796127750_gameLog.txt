@@ -1,0 +1,5 @@
+nov 04, 2026 1:42:07 PM it.unibo.ai.didattica.competition.tablut.domain.GameTablut <init>
+BUONO: Inizio partita
+nov 04, 2026 1:42:09 PM it.unibo.ai.didattica.competition.tablut.domain.GameTablut endGame
+BUONO: Stato: OOOBOOOOOOBOOOOOOWOOOBBWKWBBOOOWOOOOOOBOOOOOOBOOO-
+WW

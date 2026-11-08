@@ -1,0 +1,3339 @@
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/CachingEvaluatorCheck.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/CachingEvaluatorCheck.java
+@@ -12,6 +12,7 @@
+ import it.unibo.ai.didattica.competition.tablut.domain.State;
+ import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
+ 
+ /**
+@@ -255,8 +256,8 @@
+ 			int n = 0;
+ 			for (int i = 0; i < 400 && n < 8; i += 37, n++) {
+ 				FastState root = pos.get(i);
+-				int m1 = plain.findBestMove(root, 1_000_000_000L, new long[0], 0);
+-				int m2 = cached.findBestMove(root, 1_000_000_000L, new long[0], 0);
++				int m1 = plain.findBestMove(root, 1_000_000_000L, PositionHistory.empty());
++				int m2 = cached.findBestMove(root, 1_000_000_000L, PositionHistory.empty());
+ 				check(m1 == m2, name + "/" + oname[o] + ": mossa diversa alla posizione " + i);
+ 				check(same(plain.lastScore, cached.lastScore), name + "/" + oname[o] + ": punteggio diverso alla posizione " + i + " (" + plain.lastScore + " vs " + cached.lastScore + ")");
+ 				check(plain.lastNodeCount == cached.lastNodeCount, name + "/" + oname[o] + ": nodi diversi alla posizione " + i);
+@@ -385,7 +386,7 @@
+ 		for (int i = 0; i < 3; i++) {
+ 			FastState root = pos.get(10 + i * 31);
+ 			int n = root.generateMoves(buf);
+-			int mv = smp.findBestMove(root, 400, new long[0], 0);
++			int mv = smp.findBestMove(root, 400, PositionHistory.empty());
+ 			boolean legal = false;
+ 			for (int k = 0; k < n; k++) {
+ 				legal |= buf[k] == mv;
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/ExactKeyStackCheck.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/ExactKeyStackCheck.java
+@@ -11,6 +11,7 @@
+ 
+ import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ 
+ /**
+  * Verifica la catena a chiave esatta: {@link ExactTranspositionTable} e {@link CachingEvaluator} con {@code stateKey=true}.
+@@ -403,8 +404,8 @@
+ 					int n = 0;
+ 					for (int i = 0; i < 400 && n < 6; i += 53, n++) {
+ 						FastState root = pool.get(i);
+-						int m1 = plain.findBestMove(root, 1_000_000_000L, new long[0], 0);
+-						int m2 = exact.findBestMove(root, 1_000_000_000L, new long[0], 0);
++						int m1 = plain.findBestMove(root, 1_000_000_000L, PositionHistory.empty());
++						int m2 = exact.findBestMove(root, 1_000_000_000L, PositionHistory.empty());
+ 						String w = name + "/" + oname[o] + "/" + (two ? "2slot" : "1slot") + " pos " + i;
+ 						check(m1 == m2, w + ": mossa diversa");
+ 						check(same(plain.lastScore, exact.lastScore), w + ": punteggio diverso (" + plain.lastScore + " vs " + exact.lastScore + ")");
+@@ -437,12 +438,12 @@
+ 			for (boolean two : new boolean[] { false, true }) {
+ 				Negamax nm = new Negamax(new SimpleEvaluator(), 4, true, 1 << 16, true, OrderingSpec.parse("rec"), 1, two, new ExactTranspositionTable(1 << 16, two));
+ 				for (int i = 0; i < 4; i++) {
+-					nm.findBestMove(pool.get(i * 7), 1_000_000_000L, new long[0], 0); // scaldamento
++					nm.findBestMove(pool.get(i * 7), 1_000_000_000L, PositionHistory.empty()); // scaldamento
+ 				}
+ 				long a0 = (Long) m.invoke(bean, id);
+ 				long nodes = 0;
+ 				for (int i = 4; i < 8; i++) {
+-					nm.findBestMove(pool.get(i * 7), 1_000_000_000L, new long[0], 0);
++					nm.findBestMove(pool.get(i * 7), 1_000_000_000L, PositionHistory.empty());
+ 					nodes += nm.lastNodeCount;
+ 				}
+ 				long a1 = (Long) m.invoke(bean, id);
+@@ -464,7 +465,7 @@
+ 		for (int i = 0; i < 3; i++) {
+ 			FastState root = pool.get(10 + i * 31);
+ 			int n = root.generateMoves(buf);
+-			int mv = smp.findBestMove(root, 400, new long[0], 0);
++			int mv = smp.findBestMove(root, 400, PositionHistory.empty());
+ 			boolean legal = false;
+ 			for (int k = 0; k < n; k++) {
+ 				legal |= buf[k] == mv;
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/LazySmpCheck.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/LazySmpCheck.java
+@@ -13,6 +13,8 @@
+ import it.unibo.ai.didattica.competition.tablut.domain.State;
+ import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
++import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
+ 
+ /**
+  * Test del Lazy SMP e della transposition table lock-free (white-box: stesso package di {@link Negamax}).
+@@ -520,7 +522,7 @@
+ 						System.out.println("  (info) pos " + p + " d=" + d + ": vittoria forzata vista solo da uno dei due (4 thread=" + mt.lastScore
+ 								+ ", esatto=" + exact.lastScore + ")");
+ 					} else {
+-						double v = SearchOptimizationsCheck.exactValueOfMove(ev, s, m, d, new ArrayList<Long>());
++						double v = SearchOptimizationsCheck.exactValueOfMove(ev, s, m, d, PositionHistory.empty());
+ 						if (v < Negamax.WIN_SCORE) {
+ 							mismatches++;
+ 							System.out.println("  (info) pos " + p + " d=" + d + ": la mossa dei 4 thread NON vince secondo l'oracolo (valore " + v + ")");
+@@ -651,9 +653,9 @@
+ 		int before = failures;
+ 		Object[] cyc = SearchOptimizationsCheck.buildCycle();
+ 		State p0 = (State) cyc[0], p1 = (State) cyc[1], p2 = (State) cyc[2], p3 = (State) cyc[3];
+-		List<Long> history = new ArrayList<>();
++		PositionHistory history = new PositionHistory();
+ 		for (State p : new State[] { p0, p1, p2, p3 }) {
+-			history.add(ZobristHasher.fullHash(p));
++			TestPositions.addTo(history, p);
+ 		}
+ 		Negamax mt = new Negamax(ev, 40, true, 1 << 16, true, Negamax.ORDER_DEFAULT, 4);
+ 		int runs = 0;
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/LegacyNegamax.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/LegacyNegamax.java
+@@ -1,12 +1,11 @@
+ package it.unibo.ai.didattica.competition.tablut.aiplayer;
+ 
+-import java.util.ArrayList;
+-import java.util.Collections;
+ import java.util.List;
+ 
+ import it.unibo.ai.didattica.competition.tablut.domain.Action;
+ import it.unibo.ai.didattica.competition.tablut.domain.State;
+ import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ 
+ /**
+  * COPIA CONGELATA del motore di ricerca storico (prima della migrazione a {@code FastState}): Negamax alpha-beta con
+@@ -149,24 +148,24 @@
+ 	 * "storia reale" tra chiamate diverse).
+ 	 */
+ 	public Action findBestMove(State rootState, long timeBudgetMillis) {
+-		return findBestMove(rootState, timeBudgetMillis, Collections.emptyList());
++		return findBestMove(rootState, timeBudgetMillis, PositionHistory.empty());
+ 	}
+ 
+ 	/**
+ 	 * Trova la migliore mossa per il giocatore di turno in {@code rootState},
+ 	 * usando al massimo {@code timeBudgetMillis} millisecondi.
+ 	 *
+-	 * @param historySinceLastCapture hash Zobrist ({@link ZobristHasher}) delle
+-	 *        posizioni REALMENTE occorse in partita dall'ultima cattura (radice
+-	 *        inclusa), piu' vecchia per prima. Il chiamante (tipicamente
+-	 *        {@code TablutNegamaxClient}) la mantiene aggiornata; qui viene
+-	 *        copiata, mai modificata.
++	 * @param historySinceLastCapture le posizioni REALMENTE occorse in partita
++	 *        dall'ultima cattura (radice inclusa), piu' vecchia per prima, come
++	 *        chiavi ESATTE ({@link PositionHistory}: nessuna collisione possibile).
++	 *        Il chiamante (tipicamente {@code TablutNegamaxClient}) la mantiene
++	 *        aggiornata; qui viene copiata, mai modificata.
+ 	 * @return la miglior mossa trovata, oppure {@code null} se in {@code rootState}
+ 	 *         il giocatore di turno non ha mosse legali (situazione che, di norma,
+ 	 *         il chiamante non dovrebbe nemmeno raggiungere: se non si hanno mosse
+ 	 *         legali si e' gia' perso).
+ 	 */
+-	public Action findBestMove(State rootState, long timeBudgetMillis, List<Long> historySinceLastCapture) {
++	public Action findBestMove(State rootState, long timeBudgetMillis, PositionHistory historySinceLastCapture) {
+ 		this.deadline = System.currentTimeMillis() + Math.max(50, timeBudgetMillis - SAFETY_MARGIN_MILLIS);
+ 		return searchRoot(rootState, historySinceLastCapture);
+ 	}
+@@ -174,7 +173,7 @@
+ 	/**
+ 	 * Iterative deepening alla radice. Usa {@link #deadline} gia' impostato dal chiamante e lascia i risultati nei campi {@code last*}.
+ 	 */
+-	Action searchRoot(State rootState, List<Long> historySinceLastCapture) {
++	Action searchRoot(State rootState, PositionHistory historySinceLastCapture) {
+ 		this.timeUp = false;
+ 		this.nodeCounter = 0;
+ 		this.repetitionEventCounter = 0;
+@@ -201,7 +200,7 @@
+ 		// Copia difensiva e mutabile: la ricerca vi aggiunge/rimuove le proprie
+ 		// posizioni ipotetiche (avanti prima di ricorrere, indietro dopo il
+ 		// ritorno), ma non deve mai alterare la lista del chiamante.
+-		List<Long> history = new ArrayList<>(historySinceLastCapture);
++		PositionHistory history = historySinceLastCapture.copy();
+ 
+ 		Action best = rootMoves.get(0);
+ 		double bestScore = 0;
+@@ -281,19 +280,20 @@
+ 	// legale", invece di dover dedurle indirettamente da quale mossa sceglie
+ 	// una ricerca completa.
+ 	double exploreChild(State parent, State child, Action a, int depth, double alpha, double beta,
+-			int perspective, long childHash, List<Long> history) {
++			int perspective, long childHash, PositionHistory history) {
++		// la storia di ripetizione usa la chiave ESATTA della posizione (childHash serve solo alla TT): niente scambi per collisione
+ 		if (AshtonRules.wasCapture(parent, child, a)) {
+-			List<Long> freshHistory = new ArrayList<>();
+-			freshHistory.add(childHash);
++			PositionHistory freshHistory = new PositionHistory();
++			freshHistory.add(child);
+ 			return negamax(child, depth, alpha, beta, perspective, childHash, freshHistory);
+ 		}
+-		if (history.contains(childHash)) {
++		if (history.contains(child)) {
+ 			repetitionEventCounter++;
+ 			return 0; // seconda occorrenza della stessa posizione dall'ultima cattura: pareggio
+ 		}
+-		history.add(childHash);
++		history.add(child);
+ 		double score = negamax(child, depth, alpha, beta, perspective, childHash, history);
+-		history.remove(history.size() - 1); // backtrack: non deve restare visibile ai fratelli successivi
++		history.removeLast(); // backtrack: non deve restare visibile ai fratelli successivi
+ 		return score;
+ 	}
+ 
+@@ -311,7 +311,7 @@
+ 	 */
+ 	// package-private per lo stesso motivo di exploreChild, si veda sopra.
+ 	double negamax(State state, int depth, double alpha, double beta, int perspective, long hash,
+-			List<Long> history) {
++			PositionHistory history) {
+ 		nodeCounter++;
+ 		if ((nodeCounter & (TIME_CHECK_INTERVAL - 1)) == 0 && checkTimeUp()) {
+ 			return 0; // valore ignorato dal chiamante: appena timeUp==true, la iterazione corrente viene scartata
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/Mcts.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/Mcts.java
+@@ -3,7 +3,6 @@
+ import java.util.ArrayDeque;
+ import java.util.ArrayList;
+ import java.util.Arrays;
+-import java.util.Collections;
+ import java.util.List;
+ import java.util.concurrent.ExecutorService;
+ import java.util.concurrent.Executors;
+@@ -19,6 +18,7 @@
+ import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+ import it.unibo.ai.didattica.competition.tablut.engine.Move;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ import it.unibo.ai.didattica.competition.tablut.engine.UndoInfo;
+ 
+ /**
+@@ -173,8 +173,7 @@
+ 	static final class Control {
+ 		final Node root;
+ 		final FastState rootPos;
+-		final long[] rootHist;
+-		final int rootHistLen;
++		final PositionHistory rootHist;
+ 		final long deadlineNanos;
+ 		final long maxSims;
+ 		final long maxNodes;
+@@ -184,11 +183,10 @@
+ 		final AtomicLong simsStarted = new AtomicLong();
+ 		final AtomicLong simsDone = new AtomicLong();
+ 
+-		Control(Node root, FastState rootPos, long[] rootHist, int rootHistLen, long deadlineNanos, long maxSims, long maxNodes) {
++		Control(Node root, FastState rootPos, PositionHistory rootHist, long deadlineNanos, long maxSims, long maxNodes) {
+ 			this.root = root;
+ 			this.rootPos = rootPos;
+ 			this.rootHist = rootHist;
+-			this.rootHistLen = rootHistLen;
+ 			this.deadlineNanos = deadlineNanos;
+ 			this.maxSims = maxSims;
+ 			this.maxNodes = maxNodes;
+@@ -203,7 +201,8 @@
+ 		UndoInfo[] undo;
+ 		Node[] pNode;
+ 		int[] pEdge;
+-		long[] hist = new long[64];
++		/** Storia di ripetizione del percorso: chiavi ESATTE, {@link PositionHistory#LONGS_PER_POSITION} long per posizione. */
++		long[] hist = new long[64 * PositionHistory.LONGS_PER_POSITION];
+ 		int histLen;
+ 		int histBase;
+ 		long evals, cacheHits, sims, aborts;
+@@ -234,9 +233,11 @@
+ 			}
+ 		}
+ 
++		/** @param n numero di POSIZIONI che la storia deve poter contenere */
+ 		void ensureHist(int n) {
+-			if (n > hist.length) {
+-				hist = Arrays.copyOf(hist, Math.max(n, hist.length * 2));
++			final int need = n * PositionHistory.LONGS_PER_POSITION;
++			if (need > hist.length) {
++				hist = Arrays.copyOf(hist, Math.max(need, hist.length * 2));
+ 			}
+ 		}
+ 
+@@ -270,7 +271,7 @@
+ 	// albero riutilizzabile
+ 	private Node root;
+ 	private FastState rootPos;
+-	private long[] rootHist;
++	private PositionHistory rootHist;
+ 	private final AtomicLong nodeCount = new AtomicLong();
+ 
+ 	// statistiche dell'ultima ricerca
+@@ -441,35 +442,30 @@
+ 	// ------------------------------------------------------------------------------------------ API di confine
+ 
+ 	/** Forma di comodo per uno {@link State} del dominio: converte la radice in {@link FastState} e la mossa in {@link Action}. */
+-	public Action findBestMove(State rootState, long timeBudgetMillis, List<Long> historySinceLastCapture) {
+-		final int n = historySinceLastCapture.size();
+-		final long[] h = new long[n];
+-		for (int i = 0; i < n; i++) {
+-			h[i] = historySinceLastCapture.get(i);
+-		}
+-		final int mv = findBestMove(FastState.fromState(rootState), timeBudgetMillis, h, n);
++	public Action findBestMove(State rootState, long timeBudgetMillis, PositionHistory historySinceLastCapture) {
++		final int mv = findBestMove(FastState.fromState(rootState), timeBudgetMillis, historySinceLastCapture);
+ 		return mv == Move.NONE ? null : Move.toAction(mv, rootState.getTurn());
+ 	}
+ 
+ 	public Action findBestMove(State rootState, long timeBudgetMillis) {
+-		return findBestMove(rootState, timeBudgetMillis, Collections.<Long>emptyList());
++		return findBestMove(rootState, timeBudgetMillis, PositionHistory.empty());
+ 	}
+ 
+ 	/**
+ 	 * La ricerca. {@code rootState} non viene modificata. La storia e' quella del contratto di {@link MoveSearcher}; se e' vuota, o non finisce con
+-	 * l'hash della radice, la radice viene aggiunta (cosi' un cammino che torna alla radice e' riconosciuto come ripetizione).
++	 * la posizione della radice, la radice viene aggiunta (cosi' un cammino che torna alla radice e' riconosciuto come ripetizione).
+ 	 *
+ 	 * @return la mossa ({@link Move}), oppure {@link Move#NONE} se la partita e' finita o chi deve muovere non ha mosse legali
+ 	 */
+ 	@Override
+-	public int findBestMove(FastState rootState, long timeBudgetMillis, long[] history, int historyLen) {
++	public int findBestMove(FastState rootState, long timeBudgetMillis, PositionHistory history) {
+ 		final long t0 = System.nanoTime();
+ 		resetStats();
+ 		if (rootState.winner != FastState.WINNER_NONE) {
+ 			clearTree();
+ 			return Move.NONE;
+ 		}
+-		final long[] h = normalizeHistory(rootState, history, historyLen);
++		final PositionHistory h = normalizeHistory(rootState, history);
+ 		final Worker w0 = worker(0);
+ 		w0.resetCounters();
+ 		Node r = null;
+@@ -512,7 +508,7 @@
+ 
+ 		final long budget = Math.max(MIN_SEARCH_MILLIS, timeBudgetMillis - safetyMarginMillis);
+ 		final long maxNodes = cfg.maxNodes > 0 ? cfg.maxNodes : autoMaxNodes(Runtime.getRuntime().maxMemory());
+-		final Control c = new Control(r, rootState.duplicate(), h, h.length, t0 + budget * 1_000_000L, maxSims, maxNodes);
++		final Control c = new Control(r, rootState.duplicate(), h, t0 + budget * 1_000_000L, maxSims, maxNodes);
+ 
+ 		if (r.nMoves > 1 && !r.solved()) {
+ 			runSearch(c);
+@@ -561,20 +557,17 @@
+ 	}
+ 
+ 	/** Storia con la radice come ultima voce (la aggiunge se manca). */
+-	private static long[] normalizeHistory(FastState rootState, long[] history, int historyLen) {
+-		final int n = Math.max(0, Math.min(historyLen, history.length));
+-		if (n > 0 && history[n - 1] == rootState.zobristHash) {
+-			return Arrays.copyOf(history, n);
++	private static PositionHistory normalizeHistory(FastState rootState, PositionHistory history) {
++		final PositionHistory h = history.copy(); // copia: la storia del chiamante non si modifica
++		if (!h.endsWith(rootState)) {
++			h.add(rootState);
+ 		}
+-		final long[] h = Arrays.copyOf(history, n + 1);
+-		h[n] = rootState.zobristHash;
+ 		return h;
+ 	}
+ 
+-	private void loadHistory(Worker w, long[] h) {
+-		w.ensureHist(h.length + 8);
+-		System.arraycopy(h, 0, w.hist, 0, h.length);
+-		w.histLen = h.length;
++	private void loadHistory(Worker w, PositionHistory h) {
++		w.ensureHist(h.size() + 8);
++		w.histLen = h.copyKeysTo(w.hist, 0);
+ 		w.histBase = 0;
+ 	}
+ 
+@@ -700,7 +693,7 @@
+ 	boolean simulate(Worker w, Control c) {
+ 		final FastState st = w.st;
+ 		st.copyFrom(c.rootPos);
+-		w.histLen = c.rootHistLen;
++		w.histLen = c.rootHist.size();
+ 		w.histBase = 0;
+ 		Node node = c.root;
+ 		int d = 0;
+@@ -766,7 +759,7 @@
+ 				w.histBase = w.histLen; // una cattura azzera la memoria delle posizioni
+ 			}
+ 			w.ensureHist(w.histLen + 2);
+-			w.hist[w.histLen++] = st.zobristHash;
++			pushHistory(w, st);
+ 			if (kind == K_DESCEND) {
+ 				node = next;
+ 				continue;
+@@ -970,7 +963,7 @@
+ 					l = (byte) (moverWins ? 1 : -1);
+ 					h = l;
+ 				}
+-			} else if (!u.wasCapture() && historyContains(w, st.zobristHash)) {
++			} else if (!u.wasCapture() && historyContains(w, st)) {
+ 				v = 0;
+ 				l = 0;
+ 				h = 0;
+@@ -1042,10 +1035,21 @@
+ 		return false;
+ 	}
+ 
+-	private boolean historyContains(Worker w, long key) {
++	/** Accoda la posizione di {@code st} (chiave ESATTA) alla storia del percorso del worker; la capacita' va garantita da {@code ensureHist}. */
++	private static void pushHistory(Worker w, FastState st) {
++		final int o = w.histLen * PositionHistory.LONGS_PER_POSITION;
++		w.hist[o] = st.key0;
++		w.hist[o + 1] = st.key1;
++		w.hist[o + 2] = st.key2;
++		w.histLen++;
++	}
++
++	/** Vero se la posizione di {@code st} e' gia' nel segmento di storia del worker (dall'ultima cattura): confronto ESATTO, mai per hash. */
++	private boolean historyContains(Worker w, FastState st) {
+ 		final long[] h = w.hist;
+-		for (int i = w.histBase; i < w.histLen; i++) {
+-			if (h[i] == key) {
++		final long k0 = st.key0, k1 = st.key1, k2 = st.key2;
++		for (int i = w.histBase, o = w.histBase * PositionHistory.LONGS_PER_POSITION; i < w.histLen; i++, o += PositionHistory.LONGS_PER_POSITION) {
++			if (h[o] == k0 && h[o + 1] == k1 && h[o + 2] == k2) {
+ 				return true;
+ 			}
+ 		}
+@@ -1252,18 +1256,18 @@
+ 	 * coincidono sia la posizione sia la STORIA di ripetizione: i pareggi per ripetizione dei suoi archi sono stati calcolati con la storia
+ 	 * del cammino che ha portato a quel nodo, che deve essere esattamente quella che ora ci viene passata.
+ 	 */
+-	private Node findReusable(FastState newPos, long[] newHist) {
++	private Node findReusable(FastState newPos, PositionHistory newHist) {
+ 		if (root == null || rootPos == null || rootHist == null) {
+ 			return null;
+ 		}
+ 		final FastState pos = rootPos.duplicate();
+-		if (pos.samePosition(newPos) && Arrays.equals(rootHist, newHist)) {
++		if (pos.samePosition(newPos) && rootHist.equals(newHist)) {
+ 			return root;
+ 		}
+ 		return dfsReuse(root, pos, rootHist, 0, newPos, newHist, new UndoInfo());
+ 	}
+ 
+-	private Node dfsReuse(Node n, FastState pos, long[] hist, int depth, FastState target, long[] targetHist, UndoInfo u) {
++	private Node dfsReuse(Node n, FastState pos, PositionHistory hist, int depth, FastState target, PositionHistory targetHist, UndoInfo u) {
+ 		if (depth >= REUSE_MAX_DEPTH) {
+ 			return null;
+ 		}
+@@ -1274,15 +1278,16 @@
+ 			}
+ 			pos.makeMove(n.moves[e], u);
+ 			final boolean capture = u.wasCapture();
+-			final long[] h2;
++			final PositionHistory h2;
+ 			if (capture) {
+-				h2 = new long[] { pos.zobristHash };
++				h2 = new PositionHistory(1);
++				h2.add(pos);
+ 			} else {
+-				h2 = Arrays.copyOf(hist, hist.length + 1);
+-				h2[hist.length] = pos.zobristHash;
++				h2 = hist.copy();
++				h2.add(pos);
+ 			}
+ 			Node found = null;
+-			if (pos.samePosition(target) && Arrays.equals(h2, targetHist)) {
++			if (pos.samePosition(target) && h2.equals(targetHist)) {
+ 				found = ch;
+ 			} else {
+ 				found = dfsReuse(ch, pos, h2, depth + 1, target, targetHist, new UndoInfo());
+@@ -1323,7 +1328,7 @@
+ 		return rootPos;
+ 	}
+ 
+-	long[] rootHistory() {
++	PositionHistory rootHistory() {
+ 		return rootHist;
+ 	}
+ 
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/MctsConcurrencyCheck.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/MctsConcurrencyCheck.java
+@@ -13,6 +13,7 @@
+ import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
+ import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ import it.unibo.ai.didattica.competition.tablut.engine.Move;
+ import it.unibo.ai.didattica.competition.tablut.engine.UndoInfo;
+ import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
+@@ -28,6 +29,14 @@
+  */
+ public class MctsConcurrencyCheck {
+ 
++	/** Storia con una voce ESTRANEA (una chiave che non e' quella di nessuna posizione reale) seguita dalla radice. */
++	static PositionHistory foreignThen(FastState p) {
++		final PositionHistory h = new PositionHistory();
++		h.add(0x7777L, 0x7777L, 0x7777L);
++		h.add(p);
++		return h;
++	}
++
+ 	static int failures = 0;
+ 	static int checks = 0;
+ 	static long seed = 2025;
+@@ -117,7 +126,7 @@
+ 						continue;
+ 					}
+ 					final Mcts m = mk(cfg, threads);
+-					final int mv = m.findBestMove(p, 90, rootOnly(p), 1);
++					final int mv = m.findBestMove(p, 90, rootOnly(p));
+ 					runs++;
+ 					sims += m.lastSims;
+ 					if (m.lastError != null) {
+@@ -213,7 +222,7 @@
+ 					continue;
+ 				}
+ 				final Mcts m = new Mcts(ev, MctsConfig.parse("expand=1"), 4).setSafetyMarginMillis(0);
+-				final int mv = m.findBestMove(p, 250, rootOnly(p), 1);
++				final int mv = m.findBestMove(p, 250, rootOnly(p));
+ 				sims += m.lastSims;
+ 				if (m.lastError != null || !contains(legal(p), mv)) {
+ 					bad++;
+@@ -258,7 +267,7 @@
+ 		int bad = 0, errors = 0, illegal = 0;
+ 		for (FastState p : tiny) {
+ 			final Mcts m = MctsSearchCheck.mk(SLOW, "expand=0", 16);
+-			final int mv = m.findBestMove(p, 250, rootOnly(p), 1);
++			final int mv = m.findBestMove(p, 250, rootOnly(p));
+ 			aborts += m.lastAborts;
+ 			sims += m.lastSims;
+ 			if (m.lastError != null) {
+@@ -287,7 +296,7 @@
+ 			}
+ 			final Mcts m = MctsSearchCheck.mk(SLOW, "expand=0,reuse=false,escape=false", 8);
+ 			m.setMaxSims(40);
+-			m.findBestMove(p, 600000, rootOnly(p), 1);
++			m.findBestMove(p, 600000, rootOnly(p));
+ 			if (m.rootNode() == null || m.rootNode().solved()) {
+ 				m.shutdown();
+ 				continue;
+@@ -322,7 +331,7 @@
+ 			final GameTracker g = new GameTracker(TestPositions.initial());
+ 			m.clearTree();
+ 			for (int i = 0; i < 24 && !g.over(); i++) {
+-				final int mv = m.findBestMove(g.cur, 80, g.hist(), g.hist().length);
++				final int mv = m.findBestMove(g.cur, 80, g.hist());
+ 				plies++;
+ 				if (m.lastReused) {
+ 					reused++;
+@@ -391,10 +400,10 @@
+ 			return cur.winner != FastState.WINNER_NONE;
+ 		}
+ 
+-		long[] hist() {
+-			final long[] h = new long[seg.size()];
+-			for (int i = 0; i < h.length; i++) {
+-				h[i] = seg.get(i).zobristHash;
++		PositionHistory hist() {
++			final PositionHistory h = new PositionHistory(seg.size());
++			for (FastState f : seg) {
++				h.add(f);
+ 			}
+ 			return h;
+ 		}
+@@ -427,19 +436,20 @@
+ 		int searches = 0, predicted = 0, reusedCount = 0, mismatches = 0, walkerBad = 0, badIdentity = 0;
+ 		for (int i = 0; i < 40 && !g.over(); i++) {
+ 			final boolean corrupt = corruptOdd && (i % 3 == 2);
+-			long[] h = g.hist();
++			PositionHistory h = g.hist();
+ 			String[] keys = g.keys();
+ 			if (corrupt) {
+-				final long[] h2 = new long[h.length + 1];
+-				final String[] k2 = new String[h.length + 1];
+-				h2[0] = 0x1234567L;
++				// una voce "estranea" in testa alla storia: una chiave che non e' quella di nessuna posizione reale
++				final PositionHistory h2 = new PositionHistory(h.size() + 1);
++				final String[] k2 = new String[h.size() + 1];
++				h2.add(0x1234567L, 0x1234567L, 0x1234567L);
+ 				k2[0] = "bogus";
+-				System.arraycopy(h, 0, h2, 1, h.length);
++				h2.addAll(h);
+ 				System.arraycopy(keys, 0, k2, 1, keys.length);
+ 				h = h2;
+ 				keys = k2;
+ 			}
+-			final int mv = m.findBestMove(g.cur, 600000, h, h.length);
++			final int mv = m.findBestMove(g.cur, 600000, h);
+ 			searches++;
+ 			final boolean prevCorruptBefore = prevCorrupt;
+ 			// dopo una ricerca con storia alterata l'albero conservato presuppone quella storia: il riuso e' valido solo se nel frattempo c'e' stata una
+@@ -541,19 +551,19 @@
+ 		final FastState p = gamePositions(seed + 4, 6, 7).get(4);
+ 		final Mcts m = mk("expand=1", 1);
+ 		m.setMaxSims(300);
+-		m.findBestMove(p, 600000, rootOnly(p), 1);
++		m.findBestMove(p, 600000, rootOnly(p));
+ 		final long v1 = m.rootNode().totalVisits;
+ 		final Mcts.Node first = m.rootNode();
+-		m.findBestMove(p, 600000, rootOnly(p), 1);
++		m.findBestMove(p, 600000, rootOnly(p));
+ 		check("stessa posizione due volte: riusata la radice (" + m.lastReusedVisits + " visite) e le visite si sommano", m.lastReused && m.rootNode() == first && m.lastReusedVisits == v1
+ 				&& m.rootNode().totalVisits == v1 + m.lastSims);
+ 		// stessa posizione ma storia DIVERSA (una voce in piu' in testa): i pareggi per ripetizione dell'albero sarebbero calcolati con un'altra storia
+-		m.findBestMove(p, 600000, new long[] { 0x7777L, p.zobristHash }, 2);
++		m.findBestMove(p, 600000, foreignThen(p));
+ 		check("stessa posizione con storia diversa: il riuso e' rifiutato", !m.lastReused && m.lastReusedNodes == 0);
+-		m.findBestMove(p, 600000, new long[] { 0x7777L, p.zobristHash }, 2);
++		m.findBestMove(p, 600000, foreignThen(p));
+ 		check("... e la volta dopo, con quella stessa storia, l'albero nuovo e' riusabile", m.lastReused);
+ 		final FastState other = gamePositions(seed + 5, 6, 7).get(5);
+-		m.findBestMove(other, 600000, rootOnly(other), 1);
++		m.findBestMove(other, 600000, rootOnly(other));
+ 		check("posizione diversa non raggiungibile: albero nuovo", !m.lastReused && m.lastReusedNodes == 0);
+ 		m.clearTree();
+ 		check("clearTree: albero eliminato", m.rootNode() == null);
+@@ -576,7 +586,7 @@
+ 				final Mcts m = mk("expand=0", 1);
+ 				m.setMaxSims(1500);
+ 				final GameTracker g = new GameTracker(p);
+-				m.findBestMove(p, 600000, g.hist(), 1);
++				m.findBestMove(p, 600000, g.hist());
+ 				// si segue nell'albero l'arco piu' visitato per `depth` semi-mosse
+ 				Mcts.Node n = m.rootNode();
+ 				final int[] path = new int[depth];
+@@ -613,7 +623,7 @@
+ 				}
+ 				tested++;
+ 				m.setMaxSims(50);
+-				m.findBestMove(g.cur, 600000, g.hist(), g.hist().length);
++				m.findBestMove(g.cur, 600000, g.hist());
+ 				if (m.lastReused && m.rootNode() == target && m.lastReusedVisits == pre && m.lastReusedNodes == preNodes) {
+ 					ok++;
+ 				} else {
+@@ -636,12 +646,12 @@
+ 
+ 		// tetto ai nodi
+ 		final Mcts c1 = mk("expand=0,maxnodes=60,reuse=false", 1);
+-		final int mv1 = c1.findBestMove(start, 60000, rootOnly(start), 1);
++		final int mv1 = c1.findBestMove(start, 60000, rootOnly(start));
+ 		check("tetto 60 nodi (1 thread): raggiunto esattamente, ricerca fermata, mossa legale", c1.lastMemoryCapHit && c1.nodeCountForTest() == 60 && contains(legal(start), mv1));
+ 		check("tetto: albero coerente", new Walk(c1, SIMPLE, false, 0).run(c1.rootNode(), start, keysOf(start)) == null);
+ 		check("tetto: la ricerca e' terminata presto (" + c1.lastElapsedMillis + " ms)", c1.lastElapsedMillis < 3000);
+ 		final Mcts c4 = mk("expand=0,maxnodes=200,reuse=false", 4);
+-		final int mv4 = c4.findBestMove(start, 60000, rootOnly(start), 1);
++		final int mv4 = c4.findBestMove(start, 60000, rootOnly(start));
+ 		check("tetto 200 nodi (4 thread): superato al piu' del numero dei thread (" + c4.nodeCountForTest() + ")", c4.lastMemoryCapHit && c4.nodeCountForTest() >= 200
+ 				&& c4.nodeCountForTest() <= 200 + 4 && contains(legal(start), mv4));
+ 		check("tetto (4 thread): albero coerente", new Walk(c4, SIMPLE, false, 0).run(c4.rootNode(), start, keysOf(start)) == null);
+@@ -650,7 +660,7 @@
+ 		// profondita' massima
+ 		final Mcts d3 = mk("expand=0,maxdepth=3,reuse=false", 1);
+ 		d3.setMaxSims(3000);
+-		d3.findBestMove(start, 600000, rootOnly(start), 1);
++		d3.findBestMove(start, 600000, rootOnly(start));
+ 		final Walk wd = new Walk(d3, SIMPLE, false, 0);
+ 		final String ed = wd.run(d3.rootNode(), start, keysOf(start));
+ 		check("maxdepth=3: nessun nodo oltre la profondita' 2, albero coerente (" + wd.maxDepth + ") " + (ed == null ? "" : ed), ed == null && wd.maxDepth == 2);
+@@ -660,7 +670,7 @@
+ 		for (long n : new long[] { 1, 2, 17, 500 }) {
+ 			final Mcts m = mk("expand=1,reuse=false", 1);
+ 			m.setMaxSims(n);
+-			m.findBestMove(start, 600000, rootOnly(start), 1);
++			m.findBestMove(start, 600000, rootOnly(start));
+ 			if (m.lastSims != n || m.rootNode().totalVisits != n) {
+ 				exact = false;
+ 				System.out.println("  n=" + n + " lastSims=" + m.lastSims + " visite=" + m.rootNode().totalVisits);
+@@ -676,7 +686,7 @@
+ 				final Mcts m = mk("expand=1,reuse=false", threads);
+ 				m.setSafetyMarginMillis(cs[1]);
+ 				final long t0 = System.nanoTime();
+-				final int mv = m.findBestMove(start, cs[0], rootOnly(start), 1);
++				final int mv = m.findBestMove(start, cs[0], rootOnly(start));
+ 				final long ms = (System.nanoTime() - t0) / 1_000_000L;
+ 				final long want = Math.max(10, cs[0] - cs[1]);
+ 				check("tempo: budget " + cs[0] + " margine " + cs[1] + " (" + threads + " thread): " + ms + " ms, atteso ~" + want, ms >= want - 5 && ms <= want + 300
+@@ -755,7 +765,7 @@
+ 			final Mcts m = new Mcts(probe, MctsConfig.parse("expand=0,cache=0"), 1).setSafetyMarginMillis(0);
+ 			m.setMaxSims(1500);
+ 			final GameTracker g = new GameTracker(p);
+-			m.findBestMove(p, 600000, g.hist(), 1);
++			m.findBestMove(p, 600000, g.hist());
+ 			Mcts.Node oldRootNode = m.rootNode();
+ 			// La nostra mossa e' scelta DIVERSA dal primo arco dell'ultimo percorso simulato (cosi' i nodi che l'array del percorso ricorda sono nell'albero che
+ 			// si scarta, non nel sottoalbero riusato) e con un figlio espanso, la cui risposta piu' visitata e' anch'essa espansa.
+@@ -802,7 +812,7 @@
+ 			probe.newRoot = target;
+ 			probe.armed = true;
+ 			m.setMaxSims(1500);
+-			m.findBestMove(g.cur, 600000, g.hist(), g.hist().length);
++			m.findBestMove(g.cur, 600000, g.hist());
+ 			tested++;
+ 			if (m.lastReused && m.lastReusedVisits > 0) {
+ 				retainedSubtree++;
+@@ -861,13 +871,13 @@
+ 		final Mcts m = new Mcts(f, MctsConfig.parse("expand=1"), 1).setSafetyMarginMillis(0);
+ 		f.armed = true;
+ 		f.afterCalls = 0;
+-		final int mv = m.findBestMove(start, 1000, rootOnly(start), 1);
++		final int mv = m.findBestMove(start, 1000, rootOnly(start));
+ 		check("guasto nell'espansione della radice: mossa legale restituita, errore registrato, nessun albero", contains(legal(start), mv) && m.lastError != null && m.rootNode() == null);
+ 
+ 		// l'istanza non resta avvelenata
+ 		f.armed = false;
+ 		m.setMaxSims(200);
+-		final int mv2 = m.findBestMove(start, 1000, rootOnly(start), 1);
++		final int mv2 = m.findBestMove(start, 1000, rootOnly(start));
+ 		check("dopo il guasto l'istanza funziona di nuovo", contains(legal(start), mv2) && m.lastError == null && m.rootNode() != null && m.lastSims == 200);
+ 
+ 		// guasto durante la ricerca (1 thread)
+@@ -876,11 +886,11 @@
+ 		f.afterCalls = 3000;
+ 		m.clearTree();
+ 		m.setMaxSims(0);
+-		final int mv3 = m.findBestMove(start, 2000, rootOnly(start), 1);
++		final int mv3 = m.findBestMove(start, 2000, rootOnly(start));
+ 		check("guasto a meta' ricerca (1 thread): mossa legale, errore registrato, albero scartato", contains(legal(start), mv3) && m.lastError != null && m.rootNode() == null);
+ 		f.armed = false;
+ 		m.setMaxSims(100);
+-		check("... e poi di nuovo utilizzabile", contains(legal(start), m.findBestMove(start, 1000, rootOnly(start), 1)) && m.lastError == null);
++		check("... e poi di nuovo utilizzabile", contains(legal(start), m.findBestMove(start, 1000, rootOnly(start))) && m.lastError == null);
+ 		m.shutdown();
+ 
+ 		// guasto in un helper (4 thread): la ricerca del thread principale non fallisce
+@@ -889,11 +899,11 @@
+ 		f4.armed = true;
+ 		f4.onlyHelpers = true;
+ 		f4.afterCalls = 2000;
+-		final int mv4 = m4.findBestMove(start, 600, rootOnly(start), 1);
++		final int mv4 = m4.findBestMove(start, 600, rootOnly(start));
+ 		check("guasto in un helper (4 thread): mossa legale, errore registrato, albero scartato", contains(legal(start), mv4) && m4.lastError != null && m4.rootNode() == null);
+ 		f4.armed = false;
+ 		m4.setMaxSims(0);
+-		final int mv5 = m4.findBestMove(start, 300, rootOnly(start), 1);
++		final int mv5 = m4.findBestMove(start, 300, rootOnly(start));
+ 		check("... e il pool e' di nuovo utilizzabile (" + m4.lastSims + " simulazioni)", contains(legal(start), mv5) && m4.lastError == null && m4.lastSims > 100);
+ 		m4.shutdown();
+ 
+@@ -905,7 +915,7 @@
+ 		final CountDownLatch latch = new CountDownLatch(1);
+ 		fb.blockHelpers = latch;
+ 		final long t0 = System.nanoTime();
+-		final int mvb = mb.findBestMove(start, 200, rootOnly(start), 1);
++		final int mvb = mb.findBestMove(start, 200, rootOnly(start));
+ 		final long ms = (System.nanoTime() - t0) / 1_000_000L;
+ 		check("helper bloccato: si ritorna dopo l'attesa massima (" + ms + " ms) con mossa legale, errore, albero scartato", contains(legal(start), mvb) && mb.lastError != null
+ 				&& mb.rootNode() == null && ms >= 1500 && ms < 6000);
+@@ -913,7 +923,7 @@
+ 		fb.armed = false;
+ 		fb.blockHelpers = null;
+ 		mb.setMaxSims(100);
+-		check("... e l'istanza e' di nuovo utilizzabile con un pool nuovo", contains(legal(start), mb.findBestMove(start, 1000, rootOnly(start), 1)) && mb.lastError == null);
++		check("... e l'istanza e' di nuovo utilizzabile con un pool nuovo", contains(legal(start), mb.findBestMove(start, 1000, rootOnly(start))) && mb.lastError == null);
+ 		mb.shutdown();
+ 	}
+ 
+@@ -937,8 +947,8 @@
+ 			b.setMaxSims(250);
+ 		}
+ 		State s = TestPositions.initial();
+-		final List<Long> hist = new ArrayList<>();
+-		hist.add(ZobristHasher.fullHash(s));
++		final PositionHistory hist = new PositionHistory();
++		hist.add(s);
+ 		int illegal = 0, provenWins = 0;
+ 		boolean provenAndNotWon = false;
+ 		int outcome = 0;
+@@ -956,11 +966,7 @@
+ 			Action chosen;
+ 			if (mctsMoves || b != null) {
+ 				final Mcts who = mctsMoves ? a : b;
+-				final long[] h = new long[hist.size()];
+-				for (int i = 0; i < h.length; i++) {
+-					h[i] = hist.get(i);
+-				}
+-				final int mv = who.findBestMove(FastState.fromState(s), 600000, h, h.length);
++				final int mv = who.findBestMove(FastState.fromState(s), 600000, hist);
+ 				if (mv == Move.NONE) {
+ 					illegal++;
+ 					break;
+@@ -993,7 +999,7 @@
+ 			if (AshtonRules.wasCapture(s, next, chosen)) {
+ 				hist.clear();
+ 			}
+-			final long hn = ZobristHasher.fullHash(next);
++			final FastState hn = FastState.fromState(next);
+ 			if (hist.contains(hn)) { // stessa posizione due volte dall'ultima cattura: pareggio
+ 				outcome = 0;
+ 				s = next;
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/MctsSearchCheck.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/MctsSearchCheck.java
+@@ -14,6 +14,7 @@
+ import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
+ import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ import it.unibo.ai.didattica.competition.tablut.engine.Move;
+ import it.unibo.ai.didattica.competition.tablut.engine.UndoInfo;
+ import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
+@@ -85,7 +86,7 @@
+ 	/** Ricerca deterministica a numero di simulazioni fisso (1 thread, radice con la sola storia di se stessa). */
+ 	static int search(Mcts m, FastState s, long sims) {
+ 		m.setMaxSims(sims);
+-		return m.findBestMove(s, 600000, rootOnly(s), 1);
++		return m.findBestMove(s, 600000, rootOnly(s));
+ 	}
+ 
+ 	public static void main(String[] args) throws Exception {
+@@ -362,13 +363,13 @@
+ 		final Mcts m = mk(SIMPLE, "", 1);
+ 		final FastState st = stalemateWhite();
+ 		check("(costruzione) il Bianco non ha mosse", legal(st).length == 0 && st.winner == FastState.WINNER_NONE);
+-		check("nessuna mossa legale -> NONE, nessun errore", m.findBestMove(st, 1000, rootOnly(st), 1) == Move.NONE && m.lastError == null);
++		check("nessuna mossa legale -> NONE, nessun errore", m.findBestMove(st, 1000, rootOnly(st)) == Move.NONE && m.lastError == null);
+ 		check("... e nessun albero conservato", m.rootNode() == null);
+ 
+ 		final FastState one = singleMove();
+ 		final int[] l1 = legal(one);
+ 		check("(costruzione) una sola mossa legale", l1.length == 1);
+-		final int mv = m.findBestMove(one, 1000, rootOnly(one), 1);
++		final int mv = m.findBestMove(one, 1000, rootOnly(one));
+ 		check("una sola mossa: restituita subito senza simulazioni", mv == l1[0] && m.lastSims == 0 && m.lastElapsedMillis < 200);
+ 
+ 		// terminale: dopo una mossa vincente
+@@ -384,19 +385,23 @@
+ 			final FastState term = win.duplicate();
+ 			term.makeMove(winNowMoves(win)[0], new UndoInfo());
+ 			check("(costruzione) la posizione dopo la vittoria e' terminale", term.winner != FastState.WINNER_NONE);
+-			check("radice terminale -> NONE", m.findBestMove(term, 1000, rootOnly(term), 1) == Move.NONE && m.lastError == null);
++			check("radice terminale -> NONE", m.findBestMove(term, 1000, rootOnly(term)) == Move.NONE && m.lastError == null);
+ 		}
+ 
+ 		// immutabilita' degli ingressi
+ 		final FastState p = gamePositions(seed + 1, 6, 5).get(3);
+ 		final FastState before = p.duplicate();
+-		final long[] hist = { 11L, 22L, 33L, p.zobristHash };
+-		final long[] histCopy = hist.clone();
++		final PositionHistory hist = new PositionHistory();
++		hist.add(11L, 11L, 11L); // voci "estranee": chiavi che non sono quelle di nessuna posizione reale
++		hist.add(22L, 22L, 22L);
++		hist.add(33L, 33L, 33L);
++		hist.add(p);
++		final PositionHistory histCopy = hist.copy();
+ 		final Mcts m2 = mk(SIMPLE, "", 1);
+ 		m2.setMaxSims(500);
+-		final int mv2 = m2.findBestMove(p, 100000, hist, hist.length);
++		final int mv2 = m2.findBestMove(p, 100000, hist);
+ 		check("la radice non e' modificata", sameFast(p, before));
+-		check("la storia non e' modificata", Arrays.equals(hist, histCopy));
++		check("la storia non e' modificata", hist.equals(histCopy));
+ 		check("la mossa e' legale", contains(legal(p), mv2));
+ 
+ 		// API a Action
+@@ -647,7 +652,7 @@
+ 				child.child[j] = Mcts.EXPANDING;
+ 			}
+ 			final Mcts.Worker w = m.new Worker(8);
+-			final Mcts.Control ctl = new Mcts.Control(r, p.duplicate(), new long[] { p.zobristHash }, 1, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE);
++			final Mcts.Control ctl = new Mcts.Control(r, p.duplicate(), PositionHistory.of(p), Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE);
+ 			final boolean done = m.simulate(w, ctl);
+ 			tested++;
+ 			if (done || r.vloss[e] != 0 || r.totalVloss != 0 || child.totalVloss != 0) {
+@@ -728,7 +733,7 @@
+ 		final Mcts m = mk(SIMPLE, "expand=0,reuse=false", 1);
+ 		final Mcts.Node root = handNode(new int[] { 0, 0, 0 }, new float[] { 0.1f, 0.2f, 0.3f }, null, new int[] { 100, 100, 100 });
+ 		// tutti gli slot (5) sono stati assegnati, ma solo 3 simulazioni sono completate: 2 sono "in volo" e potrebbero ancora annullarsi e riprovare
+-		final Mcts.Control c = new Mcts.Control(root, p.duplicate(), new long[] { p.zobristHash }, 1, System.nanoTime() + 20_000_000_000L, 5, Long.MAX_VALUE);
++		final Mcts.Control c = new Mcts.Control(root, p.duplicate(), PositionHistory.of(p), System.nanoTime() + 20_000_000_000L, 5, Long.MAX_VALUE);
+ 		c.simsStarted.set(5);
+ 		c.simsDone.set(3);
+ 		final Mcts.Worker w = m.new Worker(8);
+@@ -748,7 +753,7 @@
+ 		check("nessuna simulazione e' stata eseguita da questo worker (i slot erano di altri)", w.sims == 0 && c.simsStarted.get() == 5);
+ 
+ 		// scadenza: con simulazioni ancora "in volo" ma il tempo finito, il worker non resta in attesa all'infinito
+-		final Mcts.Control late = new Mcts.Control(root, p.duplicate(), new long[] { p.zobristHash }, 1, System.nanoTime() - 1_000_000L, 5, Long.MAX_VALUE);
++		final Mcts.Control late = new Mcts.Control(root, p.duplicate(), PositionHistory.of(p), System.nanoTime() - 1_000_000L, 5, Long.MAX_VALUE);
+ 		late.simsStarted.set(5);
+ 		late.simsDone.set(3);
+ 		final Thread t2 = new Thread() {
+@@ -868,13 +873,15 @@
+ 			final Mcts h1 = mk(SIMPLE, "expand=1", 1), h2 = mk(SIMPLE, "expand=1", 1);
+ 			h1.setMaxSims(3000);
+ 			h2.setMaxSims(3000);
+-			final long[] full = new long[120]; // 120 voci: la capacita' iniziale di 64 cresce a 128, restano 8 posti oltre la storia: un cammino piu' profondo li supera
++			final PositionHistory full = new PositionHistory(120); // 120 voci: la capacita' iniziale di 64 cresce a 128, restano 8 posti oltre la storia: un cammino piu' profondo li supera
+ 			for (int i = 0; i < 119; i++) {
+-				full[i] = rnd.nextLong();
++				full.add(rnd.nextLong(), rnd.nextLong(), rnd.nextLong()); // chiavi "estranee"
+ 			}
+-			full[119] = p.zobristHash;
+-			final int r1 = h1.findBestMove(p, 100000, full, 120);
+-			final int r2 = h2.findBestMove(p, 100000, Arrays.copyOf(full, 119), 119);
++			full.add(p);
++			final PositionHistory withoutRoot = full.copy();
++			withoutRoot.removeLast();
++			final int r1 = h1.findBestMove(p, 100000, full);
++			final int r2 = h2.findBestMove(p, 100000, withoutRoot);
+ 			if (h1.lastMaxDepth > 8) {
+ 				deepHist++;
+ 			}
+@@ -1296,39 +1303,66 @@
+ 		System.out.println("  ciclo: " + Move.toString(m1) + " " + Move.toString(m2) + " " + Move.toString(m3) + " " + Move.toString(m4));
+ 
+ 		// (a) radice P3 (Nero di turno) con la storia [P0,P1,P2,P3]: la mossa m4 ricrea P0 -> pareggio esatto alla radice
+-		final long[] hist = { p0.zobristHash, p1.zobristHash, p2.zobristHash, p3.zobristHash };
++		final PositionHistory hist = PositionHistory.of(p0, p1, p2, p3);
+ 		final String[] keys = { key(p0), key(p1), key(p2), key(p3) };
+ 		final Mcts a = mk(constant(0), "expand=0,mm=0,cache=0", 1);
+ 		a.setMaxSims(50);
+-		a.findBestMove(p3, 100000, hist, 4);
++		a.findBestMove(p3, 100000, hist);
+ 		final Mcts.Node r = a.rootNode();
+ 		final int idx = indexOfMove(r, m4);
+ 		check("(a) la mossa che ricrea P0 e' nel nodo", idx >= 0);
+ 		check("(a) arco di ripetizione: pareggio esatto (0,0), q=0, nessun figlio", idx >= 0 && r.lo[idx] == 0 && r.hi[idx] == 0 && r.q[idx] == 0f && r.child[idx] == null);
+ 		final Mcts b = mk(constant(0), "expand=0,mm=0,cache=0", 1);
+ 		b.setMaxSims(50);
+-		b.findBestMove(p3, 100000, new long[] { p3.zobristHash }, 1);
++		b.findBestMove(p3, 100000, PositionHistory.of(p3));
+ 		final int idxB = indexOfMove(b.rootNode(), m4);
+ 		check("(a') senza la storia la stessa mossa e' una mossa normale (-1,1)", idxB >= 0 && b.rootNode().lo[idxB] == -1 && b.rootNode().hi[idxB] == 1);
+ 
++		// (a'') collisione di hash FORZATA: al posto di P0 la storia contiene una posizione DIVERSA con lo stesso hash. Il motore deve trattarla come una
++		// voce qualunque, cioe' come una voce ESTRANEA: l'arco di m4 deve essere identico a quello ottenuto con una voce estranea (che non puo' collidere con
++		// nulla) e NON deve essere il pareggio per ripetizione (0,0) senza figlio che si ottiene con la storia vera. Vale per ognuno dei tre long della
++		// chiave e per il turno.
++		final PositionHistory foreign = new PositionHistory();
++		foreign.add(0x7777L, 0x7777L, 0x7777L);
++		foreign.add(p1);
++		foreign.add(p2);
++		foreign.add(p3);
++		final Mcts ctl = mk(constant(0), "expand=0,mm=0,cache=0", 1);
++		ctl.setMaxSims(50);
++		ctl.findBestMove(p3, 100000, foreign);
++		final int ci = indexOfMove(ctl.rootNode(), m4);
++		check("(a'') controllo: con una voce estranea la mossa m4 non e' una ripetizione", ci >= 0 && !(ctl.rootNode().lo[ci] == 0 && ctl.rootNode().hi[ci] == 0 && ctl.rootNode().child[ci] == null));
++		final FastState[] forgedVariants = collidingVariants(p0);
++		for (int v = 0; v < forgedVariants.length; v++) {
++			final Mcts fa = mk(constant(0), "expand=0,mm=0,cache=0", 1);
++			fa.setMaxSims(50);
++			fa.findBestMove(p3, 100000, PositionHistory.of(forgedVariants[v], p1, p2, p3));
++			final int fi = indexOfMove(fa.rootNode(), m4);
++			final boolean sameAsForeign = fi >= 0 && ci >= 0 && fa.rootNode().lo[fi] == ctl.rootNode().lo[ci] && fa.rootNode().hi[fi] == ctl.rootNode().hi[ci]
++				&& fa.rootNode().q[fi] == ctl.rootNode().q[ci] && (fa.rootNode().child[fi] == null) == (ctl.rootNode().child[ci] == null);
++			final boolean notRepetition = fi >= 0 && !(fa.rootNode().lo[fi] == 0 && fa.rootNode().hi[fi] == 0 && fa.rootNode().child[fi] == null);
++			check("(a'') variante " + v + ": la collisione forzata e' trattata come una voce estranea (arco identico al controllo)", sameAsForeign && forgedVariants[v].zobristHash == p0.zobristHash);
++			check("(a'') variante " + v + ": la collisione forzata NON e' il pareggio per ripetizione", notRepetition);
++		}
++
+ 		// (b) scelta: chi perde (valutazione costante -> per il Nero +0.9 per il Bianco) preferisce il pareggio; chi vince lo evita
+ 		// P3 ha il Nero di turno. Valutazione costante C (prospettiva bianca): il Nero vede -C. Con C=+900 il Nero sta perdendo: il pareggio (0) vale piu' di -0.9.
+ 		final Mcts losing = mk(constant(900), "expand=1,mm=0,cache=0", 1);
+ 		losing.setMaxSims(3000);
+-		final int chosenLosing = losing.findBestMove(p3, 100000, hist, 4);
++		final int chosenLosing = losing.findBestMove(p3, 100000, hist);
+ 		final Mcts winning = mk(constant(-900), "expand=1,mm=0,cache=0", 1);
+ 		winning.setMaxSims(3000);
+-		final int chosenWinning = winning.findBestMove(p3, 100000, hist, 4);
++		final int chosenWinning = winning.findBestMove(p3, 100000, hist);
+ 		final boolean noTerminals = winNowMoves(p3).length == 0 && !lossIn2(p3);
+ 		check("(b) (costruzione) niente terminali vicini a P3", noTerminals);
+ 		check("(b) il Nero che sta perdendo sceglie il pareggio per ripetizione", chosenLosing == m4);
+ 		check("(b) il Nero che sta vincendo evita il pareggio per ripetizione", chosenWinning != m4);
+ 
+ 		// (c) ripetizione DENTRO l'albero: radice P2 (Bianco), storia [P0,P1,P2]: il ramo m3 porta a P3, dove la mossa m4 ricrea P0 (in storia)
+-		final long[] h2 = { p0.zobristHash, p1.zobristHash, p2.zobristHash };
++		final PositionHistory h2 = PositionHistory.of(p0, p1, p2);
+ 		final Mcts c = mk(constant(0), "expand=0,mm=0,cache=0", 1);
+ 		c.setMaxSims(4000);
+-		c.findBestMove(p2, 100000, h2, 3);
++		c.findBestMove(p2, 100000, h2);
+ 		final Mcts.Node rc = c.rootNode();
+ 		final int e3 = indexOfMove(rc, m3);
+ 		final Mcts.Node n3 = e3 >= 0 ? rc.child[e3] : null;
+@@ -1336,6 +1370,17 @@
+ 		if (n3 != null) {
+ 			final int e4 = indexOfMove(n3, m4);
+ 			check("(c) dentro l'albero la mossa m4 e' un pareggio esatto per ripetizione", e4 >= 0 && n3.lo[e4] == 0 && n3.hi[e4] == 0 && n3.child[e4] == null);
++			// (c'') stessa situazione con una collisione di hash forzata al posto di P0: dentro l'albero NON e' una ripetizione
++			for (int v = 0; v < forgedVariants.length; v++) {
++				final Mcts cf = mk(constant(0), "expand=0,mm=0,cache=0", 1);
++				cf.setMaxSims(4000);
++				cf.findBestMove(p2, 100000, PositionHistory.of(forgedVariants[v], p1, p2));
++				final int fe3 = indexOfMove(cf.rootNode(), m3);
++				final Mcts.Node fn3 = fe3 >= 0 ? cf.rootNode().child[fe3] : null;
++				final int fe4 = indexOfMove(fn3, m4);
++				check("(c'') variante " + v + ": dentro l'albero la collisione forzata NON e' una ripetizione",
++					fn3 != null && fe4 >= 0 && !(fn3.lo[fe4] == 0 && fn3.hi[fe4] == 0 && fn3.child[fe4] == null));
++			}
+ 		}
+ 		final Walk w = new Walk(c, constant(0), true, 0);
+ 		final String err = w.run(rc, p2, new String[] { key(p0), key(p1), key(p2) });
+@@ -1344,7 +1389,7 @@
+ 		// (d) senza la storia (solo la radice) il ramo non e' una ripetizione
+ 		final Mcts d = mk(constant(0), "expand=0,mm=0,cache=0", 1);
+ 		d.setMaxSims(4000);
+-		d.findBestMove(p2, 100000, new long[] { p2.zobristHash }, 1);
++		d.findBestMove(p2, 100000, PositionHistory.of(p2));
+ 		final Mcts.Node rd = d.rootNode();
+ 		final int d3 = indexOfMove(rd, m3);
+ 		final Mcts.Node nd3 = d3 >= 0 ? rd.child[d3] : null;
+@@ -1358,18 +1403,16 @@
+ 		for (int g = 0; g < 10; g++) {
+ 			final TestPositions.Game game = TestPositions.playGame(rnd, g % 2 == 0, 200);
+ 			for (int i = 5; i < game.positions.size(); i += 17) {
+-				final List<Long> hl = game.histories.get(i);
++				final PositionHistory hl = game.histories.get(i);
+ 				final int L = hl.size();
+-				final long[] hh = new long[L];
+ 				final String[] kk = new String[L];
+ 				for (int j = 0; j < L; j++) {
+-					hh[j] = hl.get(j);
+ 					kk[j] = key(FastState.fromState(game.positions.get(i - (L - 1) + j)));
+ 				}
+ 				final FastState rootPos = FastState.fromState(game.positions.get(i));
+ 				final Mcts m = mk(SIMPLE, "expand=0", 1);
+ 				m.setMaxSims(500);
+-				m.findBestMove(rootPos, 100000, hh, L);
++				m.findBestMove(rootPos, 100000, hl);
+ 				runs++;
+ 				if (m.rootNode() == null) {
+ 					continue;
+@@ -1436,8 +1479,8 @@
+ 		final Negamax n1 = new Negamax(SIMPLE, 4).setThreads(1);
+ 		final Negamax n2 = new Negamax(SIMPLE, 4).setThreads(1);
+ 		final NegamaxSearcher ad = new NegamaxSearcher(n2);
+-		final int direct = n1.findBestMove(p, 100000, rootOnly(p), 1);
+-		final int viaAdapter = ad.findBestMove(p, 100000, rootOnly(p), 1);
++		final int direct = n1.findBestMove(p, 100000, rootOnly(p));
++		final int viaAdapter = ad.findBestMove(p, 100000, rootOnly(p));
+ 		check("stessa mossa dell'algoritmo sottostante (ricerca a profondita' fissa, 1 thread)", direct == viaAdapter || n1.lastScore == n2.lastScore);
+ 		check("statistiche inoltrate", ad.lastWork() == n2.lastTotalNodeCount && ad.lastDepth() == n2.lastDepthReached && ad.describeLastSearch().contains("profondita'"));
+ 		check("nome", ad.name().equals("negamax") && ad.negamax() == n2);
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/MctsTestSupport.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/MctsTestSupport.java
+@@ -8,6 +8,7 @@
+ import it.unibo.ai.didattica.competition.tablut.domain.State;
+ import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ import it.unibo.ai.didattica.competition.tablut.engine.UndoInfo;
+ import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
+ 
+@@ -63,6 +64,29 @@
+ 		return false;
+ 	}
+ 
++	/**
++	 * Posizioni DIVERSE da {@code p} ma con lo stesso {@code zobristHash} (collisione FORZATA): una cella cambiata in ciascuno dei tre
++	 * long della chiave esatta (celle 5, 37 e 70) e il turno invertito. Una storia che identificasse le posizioni con l'hash le
++	 * scambierebbe per {@code p}; una storia a chiave esatta no. Le chiavi sono ricalcolate (ogni variante ha la propria chiave).
++	 */
++	static FastState[] collidingVariants(FastState p) {
++		final int[] squares = { 5, 37, 70 };
++		final FastState[] out = new FastState[squares.length + 1];
++		for (int i = 0; i < squares.length; i++) {
++			final FastState v = p.duplicate();
++			v.board[squares[i]] = v.board[squares[i]] == BoardConstants.EMPTY ? BoardConstants.BLACK : BoardConstants.EMPTY;
++			v.computeKeys();
++			v.zobristHash = p.zobristHash; // collisione forzata
++			out[i] = v;
++		}
++		final FastState t = p.duplicate();
++		t.turn = (byte) (t.turn ^ 1);
++		t.computeKeys();
++		t.zobristHash = p.zobristHash; // collisione forzata
++		out[squares.length] = t;
++		return out;
++	}
++
+ 	static int indexOfMove(Mcts.Node n, int move) {
+ 		if (n == null) {
+ 			return -1;
+@@ -79,9 +103,9 @@
+ 		return a.samePosition(b) && a.zobristHash == b.zobristHash && a.winner == b.winner && Arrays.equals(a.board, b.board);
+ 	}
+ 
+-	/** Storia (hash Zobrist) con la sola radice: quella che il client passerebbe a inizio partita. */
+-	static long[] rootOnly(FastState s) {
+-		return new long[] { s.zobristHash };
++	/** Storia (chiavi esatte) con la sola radice: quella che il client passerebbe a inizio partita. */
++	static PositionHistory rootOnly(FastState s) {
++		return PositionHistory.of(s);
+ 	}
+ 
+ 	static String[] keysOf(FastState s) {
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/MoveSearcher.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/MoveSearcher.java
+@@ -1,17 +1,19 @@
+ package it.unibo.ai.didattica.competition.tablut.aiplayer;
+ 
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ 
+ /**
+  * Un algoritmo di ricerca della mossa, intercambiabile: {@link NegamaxSearcher} (alpha-beta + Lazy SMP, l'algoritmo storico)
+  * oppure {@link Mcts} (Monte Carlo Tree Search). E' l'unica cosa che il client e le arene devono conoscere per poter scegliere
+  * l'algoritmo con un'opzione, senza che {@code Negamax} (verificato contro il motore storico) debba cambiare una riga.
+  * <p>
+- * Contratto comune (lo stesso di {@code Negamax.findBestMove(FastState, long, long[], int)}):
++ * Contratto comune (lo stesso di {@code Negamax.findBestMove(FastState, long, PositionHistory)}):
+  * <ul>
+  * <li>{@code root} non viene modificata ne' conservata;</li>
+- * <li>{@code history} sono gli hash Zobrist delle posizioni dall'ULTIMA CATTURA, la radice compresa come ultima voce, piu' vecchia
+- * per prima (e' la storia che serve alla regola "stessa posizione due volte = pareggio"); e' copiata, mai modificata;</li>
++ * <li>{@code history} sono le posizioni dall'ULTIMA CATTURA, la radice compresa come ultima voce, piu' vecchia per prima, come
++ * chiavi ESATTE (non hash: due posizioni diverse non possono mai essere scambiate per la stessa); e' la storia che serve alla regola
++ * "stessa posizione due volte = pareggio"; e' copiata, mai modificata;</li>
+  * <li>il budget {@code timeBudgetMillis} e' il timeout della mossa imposto dal server: l'implementazione ne toglie da se' un margine
+  * di sicurezza;</li>
+  * <li>ritorna la mossa ({@link it.unibo.ai.didattica.competition.tablut.engine.Move}) oppure {@code Move.NONE} se chi deve muovere
+@@ -23,7 +25,7 @@
+ public interface MoveSearcher {
+ 
+ 	/** Trova la mossa migliore per chi deve muovere in {@code root}; si veda il contratto nel commento di classe. */
+-	int findBestMove(FastState root, long timeBudgetMillis, long[] history, int historyLen);
++	int findBestMove(FastState root, long timeBudgetMillis, PositionHistory history);
+ 
+ 	/** Nome breve dell'algoritmo, per i messaggi di avvio. */
+ 	String name();
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/Negamax.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/Negamax.java
+@@ -1,7 +1,5 @@
+ package it.unibo.ai.didattica.competition.tablut.aiplayer;
+ 
+-import java.util.Collections;
+-import java.util.List;
+ import java.util.concurrent.ExecutionException;
+ import java.util.concurrent.ExecutorService;
+ import java.util.concurrent.Executors;
+@@ -15,6 +13,7 @@
+ import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+ import it.unibo.ai.didattica.competition.tablut.engine.Move;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ import it.unibo.ai.didattica.competition.tablut.engine.UndoInfo;
+ import it.unibo.ai.didattica.competition.tablut.engine.ZobristHash;
+ 
+@@ -276,7 +275,8 @@
+ 	/** Punteggi di ordinamento per ply (stessa indicizzazione di {@link #moveStack}). */
+ 	private int[][] scoreStack;
+ 	/** Storia di ripetizione: hash delle posizioni dall'ultima cattura, radice compresa, nel percorso corrente. */
+-	private long[] histKeys = new long[256];
++	/** Storia di ripetizione del percorso: chiavi ESATTE delle posizioni, {@link PositionHistory#LONGS_PER_POSITION} long ciascuna. */
++	private long[] histKeys = new long[256 * PositionHistory.LONGS_PER_POSITION];
+ 	private int histLen;
+ 	/** Inizio del segmento "dall'ultima cattura" dentro {@link #histKeys}: le posizioni prima di una cattura non possono ripresentarsi. */
+ 	private int histBase;
+@@ -449,9 +449,11 @@
+ 		scoreStack = sc;
+ 	}
+ 
++	/** @param capacity numero di POSIZIONI che la storia deve poter contenere */
+ 	private void ensureHist(int capacity) {
+-		if (histKeys.length < capacity) {
+-			histKeys = java.util.Arrays.copyOf(histKeys, Math.max(capacity, histKeys.length * 2));
++		final int need = capacity * PositionHistory.LONGS_PER_POSITION;
++		if (histKeys.length < need) {
++			histKeys = java.util.Arrays.copyOf(histKeys, Math.max(need, histKeys.length * 2));
+ 		}
+ 	}
+ 
+@@ -467,53 +469,41 @@
+ 	 * "storia reale" tra chiamate diverse).
+ 	 */
+ 	public Action findBestMove(State rootState, long timeBudgetMillis) {
+-		return findBestMove(rootState, timeBudgetMillis, Collections.<Long>emptyList());
++		return findBestMove(rootState, timeBudgetMillis, PositionHistory.empty());
+ 	}
+ 
+ 	/**
+ 	 * Trova la migliore mossa per il giocatore di turno in {@code rootState}, usando al massimo {@code timeBudgetMillis}
+ 	 * millisecondi. Forma "di confine" per chi ha uno {@link State} del dominio (client, trainer, test): converte la
+ 	 * radice in {@link FastState} (O(81), una volta per mossa) e la mossa trovata in {@link Action}. La ricerca vera e'
+-	 * quella di {@link #findBestMove(FastState, long, long[], int)}.
++	 * quella di {@link #findBestMove(FastState, long, PositionHistory)}.
+ 	 *
+-	 * @param historySinceLastCapture hash Zobrist ({@link ZobristHash}, gli stessi di {@code ZobristHasher.fullHash})
+-	 *        delle posizioni REALMENTE occorse in partita dall'ultima cattura (radice inclusa), piu' vecchia per prima. Il
+-	 *        chiamante (tipicamente {@code TablutNegamaxClient}) la mantiene aggiornata; qui viene copiata, mai modificata.
++	 * @param historySinceLastCapture le posizioni REALMENTE occorse in partita dall'ultima cattura (radice inclusa), piu' vecchia per
++	 *        prima, come chiavi ESATTE ({@link PositionHistory}: nessuna collisione possibile). Il chiamante (tipicamente
++	 *        {@code TablutNegamaxClient}) la mantiene aggiornata; qui viene copiata, mai modificata.
+ 	 * @return la miglior mossa trovata, oppure {@code null} se in {@code rootState} il giocatore di turno non ha mosse
+ 	 *         legali (situazione che, di norma, il chiamante non dovrebbe nemmeno raggiungere: se non si hanno mosse
+ 	 *         legali si e' gia' perso).
+ 	 */
+-	public Action findBestMove(State rootState, long timeBudgetMillis, List<Long> historySinceLastCapture) {
++	public Action findBestMove(State rootState, long timeBudgetMillis, PositionHistory historySinceLastCapture) {
+ 		int mv = findBestMove(FastState.fromState(rootState), timeBudgetMillis, historySinceLastCapture);
+ 		return mv == Move.NONE ? null : Move.toAction(mv, rootState.getTurn());
+ 	}
+ 
+-	/** Come {@link #findBestMove(FastState, long, long[], int)} senza storia. Ritorna la mossa compatta, o {@link Move#NONE}. */
++	/** Come {@link #findBestMove(FastState, long, PositionHistory)} senza storia. Ritorna la mossa compatta, o {@link Move#NONE}. */
+ 	public int findBestMove(FastState rootState, long timeBudgetMillis) {
+-		return findBestMove(rootState, timeBudgetMillis, NO_HISTORY, 0);
++		return findBestMove(rootState, timeBudgetMillis, PositionHistory.empty());
+ 	}
+ 
+-	/** Come {@link #findBestMove(FastState, long, long[], int)} con la storia in una {@code List<Long>}. */
+-	public int findBestMove(FastState rootState, long timeBudgetMillis, List<Long> historySinceLastCapture) {
+-		final int n = historySinceLastCapture.size();
+-		final long[] h = new long[n];
+-		for (int i = 0; i < n; i++) {
+-			h[i] = historySinceLastCapture.get(i);
+-		}
+-		return findBestMove(rootState, timeBudgetMillis, h, n);
+-	}
+-
+-	private static final long[] NO_HISTORY = new long[0];
+-
+ 	/**
+ 	 * La ricerca vera: trova la migliore mossa per chi deve muovere in {@code rootState} entro {@code timeBudgetMillis}.
+ 	 * {@code rootState} non viene modificata ne' conservata (ogni worker lavora su una propria copia).
+ 	 *
+-	 * @param history       hash Zobrist delle posizioni dall'ultima cattura, radice inclusa, piu' vecchia per prima
+-	 *                      (prime {@code historyLen} voci; copiata, mai modificata)
++	 * @param history       le posizioni dall'ultima cattura, radice inclusa, piu' vecchia per prima, come chiavi esatte
++	 *                      ({@link PositionHistory}; copiata, mai modificata)
+ 	 * @return la mossa ({@link Move}), oppure {@link Move#NONE} se chi deve muovere non ha mosse legali
+ 	 */
+-	public int findBestMove(FastState rootState, long timeBudgetMillis, long[] history, int historyLen) {
++	public int findBestMove(FastState rootState, long timeBudgetMillis, PositionHistory history) {
+ 		final long dl = System.currentTimeMillis() + Math.max(50, timeBudgetMillis - safetyMarginMillis);
+ 		if (tt != null) {
+ 			tt.newSearch(); // nuova mossa di partita: le voci precedenti diventano "vecchie" (conta solo per la TT a due slot)
+@@ -522,7 +512,7 @@
+ 		if (nThreads <= 1) {
+ 			this.control = null;
+ 			this.deadline = dl;
+-			int r = searchRoot(rootState, history, historyLen, 0);
++			int r = searchRoot(rootState, history, 0);
+ 			this.lastTotalNodeCount = this.lastNodeCount;
+ 			this.lastThreadsUsed = 1;
+ 			this.lastHelperErrors = 0;
+@@ -530,7 +520,7 @@
+ 			this.lastMainDepth = this.lastDepthReached;
+ 			return r;
+ 		}
+-		return findBestMoveParallel(rootState, dl, history, historyLen, nThreads);
++		return findBestMoveParallel(rootState, dl, history, nThreads);
+ 	}
+ 
+ 	/** Solo per i test: la risposta registrata come countermove e' una mossa che il lato al tratto puo' fare davvero in {@code st} (pedina sua in partenza, arrivo vuoto, stessa riga/colonna). */
+@@ -568,7 +558,7 @@
+ 	 * Iterative deepening alla radice di UN worker (il principale, workerId 0, o un helper). Usa {@link #deadline}
+ 	 * e {@link #control} gia' impostati dal chiamante e lascia i risultati nei campi {@code last*}.
+ 	 */
+-	int searchRoot(FastState rootState, long[] history, int historyLen, int workerId) {
++	int searchRoot(FastState rootState, PositionHistory history, int workerId) {
+ 		this.timeUp = false;
+ 		this.nodeCounter = 0;
+ 		this.repetitionEventCounter = 0;
+@@ -594,9 +584,8 @@
+ 
+ 		final int mySign = (s.turn == BoardConstants.WHITE_TURN) ? 1 : -1;
+ 		// Storia: copia nello stack interno, che la ricerca estende/accorcia ma che non altera mai l'array del chiamante.
+-		ensureHist(historyLen + maxDepth + 8);
+-		System.arraycopy(history, 0, histKeys, 0, historyLen);
+-		histLen = historyLen;
++		ensureHist(history.size() + maxDepth + 8);
++		histLen = history.copyKeysTo(histKeys, 0);
+ 		histBase = 0;
+ 
+ 		final boolean rootByScores = (orderingMode & ORDER_ROOT_SCORES) != 0;
+@@ -693,21 +682,22 @@
+ 		final UndoInfo u = undoStack[sp];
+ 		prevMoveAt[sp + 1] = Move.index(move);
+ 		s.makeMove(move, u);
+-		final long childHash = s.zobristHash;
++		// chiave ESATTA della posizione figlia (non l'hash): una ripetizione e' riconosciuta solo se la posizione e' davvero la stessa
++		final long k0 = s.key0, k1 = s.key1, k2 = s.key2;
+ 		double score;
+ 		if (u.wasCapture()) {
+ 			// una cattura azzera la memoria: il segmento di storia riparte da questa sola posizione
+ 			final int savedLen = histLen, savedBase = histBase;
+ 			histBase = histLen;
+-			histKeys[histLen++] = childHash;
++			pushHistory(k0, k1, k2);
+ 			score = negamax(depth, alpha, beta, perspective, sp + 1);
+ 			histLen = savedLen;
+ 			histBase = savedBase;
+-		} else if (historyContains(childHash)) {
++		} else if (historyContains(k0, k1, k2)) {
+ 			repetitionEventCounter++;
+ 			score = 0; // seconda occorrenza della stessa posizione dall'ultima cattura: pareggio
+ 		} else {
+-			histKeys[histLen++] = childHash;
++			pushHistory(k0, k1, k2);
+ 			score = negamax(depth, alpha, beta, perspective, sp + 1);
+ 			histLen--; // backtrack: non deve restare visibile ai fratelli successivi
+ 		}
+@@ -715,10 +705,19 @@
+ 		return score;
+ 	}
+ 
+-	private boolean historyContains(long key) {
++	private void pushHistory(long k0, long k1, long k2) {
++		final int o = histLen * PositionHistory.LONGS_PER_POSITION;
++		histKeys[o] = k0;
++		histKeys[o + 1] = k1;
++		histKeys[o + 2] = k2;
++		histLen++;
++	}
++
++	/** Vero se la posizione di chiave ESATTA {@code (k0,k1,k2)} e' gia' nel segmento di storia corrente (dall'ultima cattura). */
++	private boolean historyContains(long k0, long k1, long k2) {
+ 		final long[] h = histKeys;
+-		for (int i = histBase; i < histLen; i++) {
+-			if (h[i] == key) {
++		for (int i = histBase, o = histBase * PositionHistory.LONGS_PER_POSITION; i < histLen; i++, o += PositionHistory.LONGS_PER_POSITION) {
++			if (h[o] == k0 && h[o + 1] == k1 && h[o + 2] == k2) {
+ 				return true;
+ 			}
+ 		}
+@@ -732,7 +731,7 @@
+ 	 *                    Bianco, -1 dal punto di vista del Nero (classica
+ 	 *                    convenzione negamax "a colori").
+ 	 * @param sp          indice di stack di QUESTO nodo (radice = 0, suoi figli = 1, ...): selezione dei buffer di
+-	 *                    mosse e di ordinamento. L'hash del nodo e' {@code st.zobristHash}, aggiornato incrementalmente.
++	 *                    mosse e di ordinamento. La TT identifica il nodo con {@code st} (hash o chiave esatta); la storia con la sua chiave esatta.
+ 	 *                    La storia ({@link #histKeys}) contiene il percorso dalla radice fino a questo nodo (compreso).
+ 	 */
+ 	// package-private per lo stesso motivo di exploreChild, si veda sopra.
+@@ -754,7 +753,6 @@
+ 			return 0; // pareggio
+ 		}
+ 
+-		final long hash = s.zobristHash;
+ 		double alphaOriginal = alpha;
+ 		int ttMovePacked = -1;
+ 		// "Firma" del contatore di ripetizioni a questo punto: se cambia mentre
+@@ -1112,15 +1110,11 @@
+ 	 * di ripetizione, e prepara gli stack per una discesa di {@code depth} ply. Dopo di questo si possono chiamare
+ 	 * direttamente {@link #negamax} ed {@link #exploreChild} con {@code sp = 0}.
+ 	 */
+-	void installForTest(FastState position, List<Long> history, int depth) {
++	void installForTest(FastState position, PositionHistory history, int depth) {
+ 		allocStacks(depth + 4);
+ 		st.copyFrom(position);
+-		final int n = history.size();
+-		ensureHist(n + depth + 8);
+-		for (int i = 0; i < n; i++) {
+-			histKeys[i] = history.get(i);
+-		}
+-		histLen = n;
++		ensureHist(history.size() + depth + 8);
++		histLen = history.copyKeysTo(histKeys, 0);
+ 		histBase = 0;
+ 		timeUp = false;
+ 		deadline = Long.MAX_VALUE;
+@@ -1265,7 +1259,7 @@
+ 		return best;
+ 	}
+ 
+-	private int findBestMoveParallel(FastState rootState, long dl, long[] history, int historyLen, int nThreads) {
++	private int findBestMoveParallel(FastState rootState, long dl, PositionHistory history, int nThreads) {
+ 		if (!rootState.hasLegalMove()) {
+ 			this.lastThreadsUsed = 1;
+ 			return Move.NONE;
+@@ -1287,13 +1281,13 @@
+ 			h.deadline = dl;
+ 			h.helperError = null;
+ 			final FastState rootCopy = rootState.duplicate();
+-			final long[] historyCopy = java.util.Arrays.copyOf(history, historyLen);
++			final PositionHistory historyCopy = history.copy();
+ 			final int workerId = i + 1;
+ 			helperFutures[i] = pool.submit(new Runnable() {
+ 				@Override
+ 				public void run() {
+ 					try {
+-						h.searchRoot(rootCopy, historyCopy, historyCopy.length, workerId);
++						h.searchRoot(rootCopy, historyCopy, workerId);
+ 					} catch (Throwable t) {
+ 						h.helperError = t; // un helper in errore non deve mai far fallire la mossa
+ 					}
+@@ -1305,7 +1299,7 @@
+ 
+ 		int best;
+ 		try {
+-			best = searchRoot(rootState, history, historyLen, 0);
++			best = searchRoot(rootState, history, 0);
+ 		} finally {
+ 			ctl.stop = true; // il principale ha finito: gli helper si fermano al prossimo controllo (~2048 nodi)
+ 		}
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/NegamaxSearcher.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/NegamaxSearcher.java
+@@ -1,6 +1,7 @@
+ package it.unibo.ai.didattica.competition.tablut.aiplayer;
+ 
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ 
+ /**
+  * Adattatore che fa di {@link Negamax} un {@link MoveSearcher}. Non aggiunge logica: inoltra le chiamate e legge i campi
+@@ -23,8 +24,8 @@
+ 	}
+ 
+ 	@Override
+-	public int findBestMove(FastState root, long timeBudgetMillis, long[] history, int historyLen) {
+-		return negamax.findBestMove(root, timeBudgetMillis, history, historyLen);
++	public int findBestMove(FastState root, long timeBudgetMillis, PositionHistory history) {
++		return negamax.findBestMove(root, timeBudgetMillis, history);
+ 	}
+ 
+ 	@Override
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/NoAllocationCheck.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/NoAllocationCheck.java
+@@ -7,6 +7,7 @@
+ 
+ import it.unibo.ai.didattica.competition.tablut.domain.State;
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
+ 
+ /**
+@@ -74,13 +75,13 @@
+ 			Evaluator legacyEv = evs[e] instanceof SimpleEvaluator ? new LegacySimpleEvaluator() : evs[e];
+ 			LegacyNegamax legacyWarm = new LegacyNegamax(legacyEv, depths[e], true, 1 << 18, true, Negamax.ORDER_DEFAULT);
+ 			for (State s : states) {
+-				legacyWarm.findBestMove(s, 1_000_000L, new ArrayList<Long>());
++				legacyWarm.findBestMove(s, 1_000_000L, PositionHistory.empty());
+ 			}
+ 			LegacyNegamax legacy = new LegacyNegamax(legacyEv, depths[e], true, 1 << 18, true, Negamax.ORDER_DEFAULT);
+ 			long ln = 0;
+ 			long lb = bytes(alloc, mx);
+ 			for (State s : states) {
+-				legacy.findBestMove(s, 1_000_000L, new ArrayList<Long>());
++				legacy.findBestMove(s, 1_000_000L, PositionHistory.empty());
+ 				ln += legacy.lastNodeCount;
+ 			}
+ 			double legacyPerNode = (double) (bytes(alloc, mx) - lb) / Math.max(1, ln);
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/OrderingExtCheck.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/OrderingExtCheck.java
+@@ -15,6 +15,7 @@
+ import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+ import it.unibo.ai.didattica.competition.tablut.engine.Move;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ 
+ /**
+  * Verifica le opzioni di ordinamento ESTESE di {@link Negamax} ({@link Negamax#ORDER_WINS}, {@code ORDER_CAPTURES},
+@@ -230,7 +231,7 @@
+ 							continue;
+ 						}
+ 						Negamax n = new Negamax(new SimpleEvaluator(), 6, false, 0, true, mode).setThreads(1);
+-						n.installForTest(FastState.fromState(c), new ArrayList<Long>(), 4);
++						n.installForTest(FastState.fromState(c), PositionHistory.empty(), 4);
+ 						final int ply = 1 + rnd.nextInt(4);
+ 						int[] mv = new int[cnt];
+ 						int[] tv = new int[cnt];
+@@ -632,7 +633,7 @@
+ 							}
+ 						}
+ 					}
+-					n.installForTest(FastState.fromState(root), new ArrayList<Long>(), 1);
++					n.installForTest(FastState.fromState(root), PositionHistory.empty(), 1);
+ 					n.prevMoveAt[0] = rnd.nextInt(3) == 0 ? -1 : rnd.nextInt(6561);
+ 					n.negamax(1, -SearchOptimizationsCheck.INF, SearchOptimizationsCheck.INF, side == 0 ? 1 : -1, 0);
+ 					checks++;
+@@ -674,7 +675,7 @@
+ 				}
+ 				// la mossa deve valere il valore di radice (ottima), anche se il tie-break e' cambiato
+ 				if (m != null) {
+-					double v = SearchOptimizationsCheck.exactValueOfMove(ev, s, m, cand.lastDepthReached, new ArrayList<Long>());
++					double v = SearchOptimizationsCheck.exactValueOfMove(ev, s, m, cand.lastDepthReached, PositionHistory.empty());
+ 					if (Math.abs(v - cand.lastScore) > 1e-9 && Math.abs(cand.lastScore - fresh.lastScore) <= 1e-9) {
+ 						fail(cfg.name + " [istanza riusata]: la mossa scelta vale " + v + " ma il valore di radice e' " + cand.lastScore);
+ 					}
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/PVSCheck.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/PVSCheck.java
+@@ -7,6 +7,8 @@
+ import it.unibo.ai.didattica.competition.tablut.domain.Action;
+ import it.unibo.ai.didattica.competition.tablut.domain.State;
+ import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
++import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
+ import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
+ 
+ /**
+@@ -74,30 +76,31 @@
+ 	 * (Non si puo' usare una seconda istanza di Negamax come oracolo: il suo orologio interno interrompe la ricerca
+ 	 * dopo 2048 nodi se non e' stata avviata da findBestMove.)
+ 	 */
+-	static double exactValueOfMove(Evaluator ev, State root, Action m, int d, List<Long> history) {
++	static double exactValueOfMove(Evaluator ev, State root, Action m, int d, PositionHistory history) {
+ 		int mySign = root.getTurn() == Turn.WHITE ? 1 : -1;
+ 		State child = AshtonRules.applyMove(root, m);
+-		return -oracleChild(ev, root, child, m, d - 1, -INF, INF, -mySign, new ArrayList<>(history));
++		return -oracleChild(ev, root, child, m, d - 1, -INF, INF, -mySign, history.copy());
+ 	}
+ 
+ 	static double oracleChild(Evaluator ev, State parent, State child, Action a, int depth, double alpha, double beta,
+-			int persp, List<Long> history) {
+-		long h = ZobristHasher.fullHash(child);
++			int persp, PositionHistory history) {
++		// chiave ESATTA calcolata in modo INDEPENDENTE da FastState e da Negamax (stesso oracolo storico, ma senza hash)
++		final long[] h = TestPositions.exactKey(child);
+ 		if (AshtonRules.wasCapture(parent, child, a)) {
+-			List<Long> fresh = new ArrayList<>();
+-			fresh.add(h);
++			PositionHistory fresh = new PositionHistory();
++			fresh.add(h[0], h[1], h[2]);
+ 			return oracle(ev, child, depth, alpha, beta, persp, fresh);
+ 		}
+-		if (history.contains(h)) {
++		if (history.contains(h[0], h[1], h[2])) {
+ 			return 0; // ripetizione = pareggio
+ 		}
+-		history.add(h);
++		history.add(h[0], h[1], h[2]);
+ 		double v = oracle(ev, child, depth, alpha, beta, persp, history);
+-		history.remove(history.size() - 1);
++		history.removeLast();
+ 		return v;
+ 	}
+ 
+-	static double oracle(Evaluator ev, State s, int depth, double alpha, double beta, int persp, List<Long> history) {
++	static double oracle(Evaluator ev, State s, int depth, double alpha, double beta, int persp, PositionHistory history) {
+ 		Turn t = s.getTurn();
+ 		if (t == Turn.WHITEWIN) {
+ 			return persp * (Negamax.WIN_SCORE + depth);
+@@ -166,12 +169,12 @@
+ 					continue;
+ 				}
+ 				// l'alpha-beta di Negamax (baseline) deve coincidere con l'oracolo indipendente
+-				double vab = exactValueOfMove(ev, pos, mAB, ab.lastDepthReached, new ArrayList<Long>());
++				double vab = exactValueOfMove(ev, pos, mAB, ab.lastDepthReached, PositionHistory.empty());
+ 				if (Math.abs(vab - ab.lastScore) > 1e-9) {
+ 					fail(name + " pos " + p + " d=" + d + ": l'alpha-beta di Negamax diverge dall'oracolo (" + ab.lastScore + " vs " + vab + ")");
+ 				}
+ 				// la mossa di PVS deve essere ottima: valore esatto == valore di radice
+-				double v = exactValueOfMove(ev, pos, mPVS, pvs.lastDepthReached, new ArrayList<Long>());
++				double v = exactValueOfMove(ev, pos, mPVS, pvs.lastDepthReached, PositionHistory.empty());
+ 				if (Math.abs(v - pvs.lastScore) > 1e-9) {
+ 					fail(name + " pos " + p + " d=" + d + ": la mossa di PVS " + mPVS.getFrom() + "->" + mPVS.getTo()
+ 							+ " vale " + v + " ma il valore di radice e' " + pvs.lastScore);
+@@ -179,7 +182,7 @@
+ 				// e nessuna altra mossa deve valere di piu' (verifica indipendente del massimo)
+ 				if (d <= 3) {
+ 					for (Action m : AshtonRules.generateMoves(pos)) {
+-						double vm = exactValueOfMove(ev, pos, m, pvs.lastDepthReached, new ArrayList<Long>());
++						double vm = exactValueOfMove(ev, pos, m, pvs.lastDepthReached, PositionHistory.empty());
+ 						if (vm > pvs.lastScore + 1e-9) {
+ 							fail(name + " pos " + p + " d=" + d + ": esiste una mossa migliore " + m.getFrom() + "->" + m.getTo()
+ 									+ " (" + vm + " > " + pvs.lastScore + ")");
+@@ -313,11 +316,11 @@
+ 	static void checkRepetitionHistory() {
+ 		Object[] cyc = buildCycle();
+ 		State p0 = (State) cyc[0], p1 = (State) cyc[1], p2 = (State) cyc[2], p3 = (State) cyc[3];
+-		List<Long> history = new ArrayList<>();
+-		history.add(ZobristHasher.fullHash(p0));
+-		history.add(ZobristHasher.fullHash(p1));
+-		history.add(ZobristHasher.fullHash(p2));
+-		history.add(ZobristHasher.fullHash(p3));
++		PositionHistory history = new PositionHistory();
++		TestPositions.addTo(history, p0);
++		TestPositions.addTo(history, p1);
++		TestPositions.addTo(history, p2);
++		TestPositions.addTo(history, p3);
+ 		Evaluator ev = new SimpleEvaluator();
+ 		int before = failures;
+ 		long reps = 0;
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/RepetitionAndStalemateCheck.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/RepetitionAndStalemateCheck.java
+@@ -7,6 +7,8 @@
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+ import it.unibo.ai.didattica.competition.tablut.engine.Move;
+ import it.unibo.ai.didattica.competition.tablut.engine.UndoInfo;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
++import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
+ import it.unibo.ai.didattica.competition.tablut.domain.Action;
+ import it.unibo.ai.didattica.competition.tablut.domain.State;
+ import it.unibo.ai.didattica.competition.tablut.domain.State.Pawn;
+@@ -48,6 +50,7 @@
+ 
+ 		testRepetitionDetectedWithHistory(p0, p1, p2, p3, m4);
+ 		testNoRepetitionWithoutHistory(p3, m4);
++		testForgedHashCollisionIsNotRepetition(p0, p1, p2, p3, m4);
+ 		testRepetitionSafeWithAndWithoutTT(p0, p1, p2, p3);
+ 		testNoLegalMoves();
+ 		testNoLegalMovesCachedCorrectly();
+@@ -164,6 +167,13 @@
+ 		return c.zobristHash;
+ 	}
+ 
++	/** Chiave esatta di FastState dopo aver giocato {@code m} su una COPIA di {@code root}. */
++	private static long[] keyAfter(FastState root, Action m) {
++		FastState c = root.duplicate();
++		c.makeMove(Move.fromAction(m), new UndoInfo());
++		return new long[] { c.key0, c.key1, c.key2 };
++	}
++
+ 	private static Action findReverse(State state, Action original) {
+ 		for (Action a : AshtonRules.generateMoves(state)) {
+ 			if (a.getFrom().equals(original.getTo()) && a.getTo().equals(original.getFrom())) {
+@@ -196,24 +206,22 @@
+ 		System.out.println("--- testRepetitionDetectedWithHistory ---");
+ 		Negamax n = new Negamax(new SimpleEvaluator(), 10).setThreads(1);
+ 
+-		long h0 = ZobristHasher.fullHash(p0);
+-		long h1 = ZobristHasher.fullHash(p1);
+-		long h2 = ZobristHasher.fullHash(p2);
+-		long h3 = ZobristHasher.fullHash(p3);
+-		List<Long> history = new ArrayList<>();
+-		history.add(h0);
+-		history.add(h1);
+-		history.add(h2);
+-		history.add(h3);
++		PositionHistory history = new PositionHistory();
++		TestPositions.addTo(history, p0);
++		TestPositions.addTo(history, p1);
++		TestPositions.addTo(history, p2);
++		TestPositions.addTo(history, p3);
+ 
+ 		State p4 = AshtonRules.applyMove(p3, m4);
+-		long h4 = ZobristHasher.fullHash(p4);
+-		check("la mossa finale ricrea esattamente l'hash della posizione iniziale", h4 == h0);
++		final long[] k0 = TestPositions.exactKey(p0), k4 = TestPositions.exactKey(p4);
++		check("la mossa finale ricrea esattamente la posizione iniziale (stessa chiave esatta)", java.util.Arrays.equals(k4, k0));
++		check("... e anche lo stesso hash storico", ZobristHasher.fullHash(p4) == ZobristHasher.fullHash(p0));
+ 
+ 		long counterBefore = n.repetitionEventCounter;
+ 		FastState root = FastState.fromState(p3);
+ 		n.installForTest(root, history, 3);
+-		check("l'hash incrementale di FastState dopo la mossa coincide con quello storico", hashAfter(root, m4) == h4);
++		check("l'hash incrementale di FastState dopo la mossa coincide con quello storico", hashAfter(root, m4) == ZobristHasher.fullHash(p4));
++		check("la chiave esatta incrementale di FastState dopo la mossa coincide con quella calcolata in modo indipendente", java.util.Arrays.equals(keyAfter(root, m4), k4));
+ 		double score = n.exploreChild(Move.fromAction(m4), 3, -1e9, 1e9, 1, 0);
+ 		check("con la storia corretta, la ripetizione e' un pareggio esatto (punteggio 0)", score == 0.0);
+ 		check("il contatore di ripetizioni e' stato incrementato", n.repetitionEventCounter == counterBefore + 1);
+@@ -221,19 +229,68 @@
+ 		check("la storia e' tornata alla lunghezza iniziale", n.historyLengthForTest() == history.size());
+ 	}
+ 
++	// ------------------------------------------------------------------
++	// Test 1b: una collisione di hash NON puo' diventare una ripetizione
++	// ------------------------------------------------------------------
++
++	/**
++	 * La storia contiene, al posto di P0, una posizione DIVERSA con lo stesso hash Zobrist (collisione forzata). Con la storia a hash la mossa
++	 * che ricrea P0 sarebbe stata scambiata per una ripetizione (pareggio 0 fantasma); con le chiavi esatte non deve esserlo, per nessuno dei
++	 * tre long della chiave e per il turno. Controprova: con la storia VERA la stessa mossa e' una ripetizione.
++	 */
++	private static void testForgedHashCollisionIsNotRepetition(State p0, State p1, State p2, State p3, Action m4) {
++		System.out.println("--- testForgedHashCollisionIsNotRepetition ---");
++		final FastState f0 = FastState.fromState(p0);
++		final FastState root = FastState.fromState(p3);
++		final FastState[] variants = MctsTestSupport.collidingVariants(f0);
++		final int move = Move.fromAction(m4);
++		for (int v = 0; v < variants.length; v++) {
++			final FastState forged = variants[v];
++			check("variante " + v + ": e' una posizione diversa con lo stesso hash di P0",
++				forged.zobristHash == f0.zobristHash && !(forged.key0 == f0.key0 && forged.key1 == f0.key1 && forged.key2 == f0.key2));
++			// con una storia A HASH la collisione sarebbe stata una (falsa) ripetizione: lo documentiamo
++			final java.util.List<Long> hashHistory = new java.util.ArrayList<>();
++			hashHistory.add(forged.zobristHash);
++			check("variante " + v + ": una storia a hash la scambierebbe per P0 (il rischio che le chiavi esatte eliminano)", hashHistory.contains(f0.zobristHash));
++
++			final PositionHistory history = new PositionHistory();
++			history.add(forged);
++			history.add(FastState.fromState(p1));
++			history.add(FastState.fromState(p2));
++			history.add(root);
++			final Negamax n = new Negamax(new SimpleEvaluator(), 10).setThreads(1);
++			final long counterBefore = n.repetitionEventCounter;
++			n.installForTest(root, history, 0);
++			// profondita' 0 per il figlio, come in testNoRepetitionWithoutHistory: nessuna ripetizione puo' nascere nel sottoalbero,
++			// quindi solo un falso riconoscimento alla radice del figlio darebbe punteggio 0 e conterebbe un evento
++			final double score = n.exploreChild(move, 0, -1e9, 1e9, 1, 0);
++			check("variante " + v + ": la collisione NON e' trattata come ripetizione (punteggio != 0)", score != 0.0);
++			check("variante " + v + ": il contatore di ripetizioni non e' cambiato", n.repetitionEventCounter == counterBefore);
++		}
++		// controprova: con la storia VERA la stessa mossa e' una ripetizione
++		final PositionHistory real = new PositionHistory();
++		real.add(f0);
++		real.add(FastState.fromState(p1));
++		real.add(FastState.fromState(p2));
++		real.add(root);
++		final Negamax n = new Negamax(new SimpleEvaluator(), 10).setThreads(1);
++		final long counterBefore = n.repetitionEventCounter;
++		n.installForTest(root, real, 0);
++		check("controprova: con la storia vera la mossa e' una ripetizione (punteggio 0)", n.exploreChild(move, 0, -1e9, 1e9, 1, 0) == 0.0);
++		check("controprova: il contatore e' incrementato", n.repetitionEventCounter == counterBefore + 1);
++	}
++
+ 	private static void testNoRepetitionWithoutHistory(State p3, Action m4) {
+ 		System.out.println("--- testNoRepetitionWithoutHistory ---");
+ 		Negamax n = new Negamax(new SimpleEvaluator(), 10).setThreads(1);
+ 
+-		State p4 = AshtonRules.applyMove(p3, m4);
+-		long h4 = ZobristHasher.fullHash(p4);
+ 		long counterBefore = n.repetitionEventCounter;
+ 
+ 		// STESSA posizione, STESSA mossa, ma SENZA storia: non deve essere
+ 		// affatto trattata come ripetizione (altrimenti scatterebbe per
+ 		// coincidenza sulla board, non per la vera storia della partita).
+ 		FastState root = FastState.fromState(p3);
+-		n.installForTest(root, new ArrayList<Long>(), 0);
++		n.installForTest(root, PositionHistory.empty(), 0);
+ 		double score = n.exploreChild(Move.fromAction(m4), 0, -1e9, 1e9, 1, 0);
+ 		check("senza storia, la stessa posizione NON e' trattata come pareggio", score != 0.0);
+ 		check("il contatore di ripetizioni non e' cambiato", n.repetitionEventCounter == counterBefore);
+@@ -247,13 +304,10 @@
+ 
+ 	private static void testRepetitionSafeWithAndWithoutTT(State p0, State p1, State p2, State p3) {
+ 		System.out.println("--- testRepetitionSafeWithAndWithoutTT ---");
+-		long h0 = ZobristHasher.fullHash(p0);
+-		long h1 = ZobristHasher.fullHash(p1);
+-		long h2 = ZobristHasher.fullHash(p2);
+-		List<Long> history = new ArrayList<>();
+-		history.add(h0);
+-		history.add(h1);
+-		history.add(h2);
++		PositionHistory history = new PositionHistory();
++		TestPositions.addTo(history, p0);
++		TestPositions.addTo(history, p1);
++		TestPositions.addTo(history, p2);
+ 		long generousBudget = 200_000L;
+ 
+ 		for (int depth = 2; depth <= 5; depth++) {
+@@ -317,7 +371,7 @@
+ 		Negamax n = new Negamax(new SimpleEvaluator(), 5).setThreads(1);
+ 		long hash = ZobristHasher.fullHash(s);
+ 		int depth = 3;
+-		n.installForTest(FastState.fromState(s), new ArrayList<Long>(), depth);
++		n.installForTest(FastState.fromState(s), PositionHistory.empty(), depth);
+ 		check("l'hash di FastState coincide con quello storico anche per questa posizione artificiale", n.workingState().zobristHash == hash);
+ 		double score = n.negamax(depth, -1e9, 1e9, 1, 0);
+ 		double expected = -(Negamax.WIN_SCORE + depth); // perspective=1 (bianco): sconfitta = punteggio molto negativo
+@@ -332,7 +386,7 @@
+ 		long hash = ZobristHasher.fullHash(s);
+ 		int depth = 3;
+ 
+-		n.installForTest(FastState.fromState(s), new ArrayList<Long>(), depth);
++		n.installForTest(FastState.fromState(s), PositionHistory.empty(), depth);
+ 		double first = n.negamax(depth, -1e9, 1e9, 1, 0);
+ 
+ 		TranspositionTable.ProbeResult probe = n.tt.probe(hash, depth);
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/SearchEquivalenceCheck.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/SearchEquivalenceCheck.java
+@@ -8,8 +8,10 @@
+ import it.unibo.ai.didattica.competition.tablut.domain.Action;
+ import it.unibo.ai.didattica.competition.tablut.domain.State;
+ import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
++import it.unibo.ai.didattica.competition.tablut.domain.State.Pawn;
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+ import it.unibo.ai.didattica.competition.tablut.engine.Move;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
+ 
+ /**
+@@ -99,7 +101,7 @@
+ 					i = Math.min(n - 1, 2 + rnd.nextInt(4));
+ 				}
+ 				State s = game.positions.get(i);
+-				List<Long> h = game.histories.get(i);
++				PositionHistory h = game.histories.get(i);
+ 				for (Cfg cfg : CFGS) {
+ 					int depth = cfg.tt ? 4 : 3;
+ 					compare("partita " + g + " ply " + i + " [" + cfg.name + "] Simple d" + depth, s, h, simpleNew, simpleOld, cfg, depth);
+@@ -113,8 +115,8 @@
+ 		long before = comparisons;
+ 		for (int i = 0; i < randomPositions; i++) {
+ 			State s = TestPositions.randomPosition(rnd);
+-			List<Long> h = new ArrayList<>();
+-			h.add(FastState.hashOf(s));
++			PositionHistory h = new PositionHistory();
++			h.add(s);
+ 			for (Cfg cfg : CFGS) {
+ 				compare("casuale " + i + " [" + cfg.name + "] d" + (cfg.tt ? 4 : 3), s, h, simpleNew, simpleOld, cfg, cfg.tt ? 4 : 3);
+ 			}
+@@ -133,6 +135,9 @@
+ 		timedSearches(rnd, simpleNew, net);
+ 		apiConsistency(rnd, simpleNew);
+ 
++		// ---- 5) posizioni RADE a profondita' maggiore: i cicli nel cammino di ricerca (ripetizioni contro un antenato che non e' la radice)
++		sparseDeepPositions(rnd, simpleNew, simpleOld);
++
+ 		System.out.println("Ripetizioni incontrate dalla ricerca nei confronti: " + repetitionsSeen);
+ 		check(comparisons > 200, "copertura: confronti troppo pochi (" + comparisons + ")");
+ 		check(nodesNew > 1_000_000, "copertura: nodi troppo pochi (" + nodesNew + ")");
+@@ -157,7 +162,7 @@
+ 		return a.getFrom().equals(b.getFrom()) && a.getTo().equals(b.getTo()) && a.getTurn() == b.getTurn();
+ 	}
+ 
+-	private static void compare(String label, State root, List<Long> hist, Evaluator evNew, Evaluator evOld, Cfg cfg, int depth) {
++	private static void compare(String label, State root, PositionHistory hist, Evaluator evNew, Evaluator evOld, Cfg cfg, int depth) {
+ 		LegacyNegamax legacy = new LegacyNegamax(evOld, depth, cfg.tt, 1 << 14, cfg.pvs, cfg.order);
+ 		Negamax fresh = new Negamax(evNew, depth, cfg.tt, 1 << 14, cfg.pvs, cfg.order, 1);
+ 
+@@ -206,13 +211,58 @@
+ 	 * invecchiamento) e il resto dello stato persistono tra una ricerca e la successiva, come nel client reale. Le due istanze
+ 	 * devono scegliere sempre la stessa mossa con gli stessi numeri; la partita prosegue con la mossa comune.
+ 	 */
++	/**
++	 * Posizioni con il solo re, due bianchi e due neri (molto poche mosse e molti cicli di 4 semi-mosse), a profondita' 5 e 6: un ciclo che non passa
++	 * dalla radice ripete una posizione GIA' VISITATA SUL CAMMINO (non nella storia reale) al quinto semi-passo. {@link #compare} confronta con
++	 * {@link LegacyNegamax} (storia a chiavi esatte anche sul cammino) mossa, punteggio, nodi e numero di ripetizioni incontrate: un rilevatore che non
++	 * riconoscesse le posizioni del cammino darebbe un numero di ripetizioni (e di nodi) diverso.
++	 */
++	private static void sparseDeepPositions(Random rnd, Evaluator simpleNew, Evaluator simpleOld) {
++		final long before = repetitionsSeen;
++		int used = 0;
++		for (int i = 0; i < 400 && used < 30; i++) {
++			final State st = TestPositions.randomPosition(rnd);
++			final Pawn[][] b = st.getBoard();
++			int whites = 0, blacks = 0;
++			for (int r = 0; r < 9; r++) {
++				for (int c = 0; c < 9; c++) {
++					final Pawn p = b[r][c];
++					if (p == Pawn.WHITE && whites++ >= 2) {
++						b[r][c] = Pawn.EMPTY;
++					} else if (p == Pawn.BLACK && blacks++ >= 2) {
++						b[r][c] = Pawn.EMPTY;
++					}
++				}
++			}
++			if (b[4][4] != Pawn.KING) {
++				b[4][4] = Pawn.THRONE;
++			}
++			final FastState f = FastState.fromState(st);
++			if (f.isGameOver()) {
++				continue;
++			}
++			final PositionHistory h = new PositionHistory();
++			h.add(st);
++			compare("rada " + i + " d5", st, h, simpleNew, simpleOld, CFGS[0], 5);
++			if (used < 12) {
++				compare("rada " + i + " d6", st, h, simpleNew, simpleOld, CFGS[0], 6);
++				compare("rada " + i + " d6 senza TT", st, h, simpleNew, simpleOld, CFGS[1], 6);
++			}
++			used++;
++		}
++		final long events = repetitionsSeen - before;
++		System.out.println("Posizioni rade (d5/d6): " + used + " posizioni, ripetizioni incontrate: " + events);
++		check(used >= 20, "copertura: poche posizioni rade valide (" + used + ")");
++		check(events > 200, "copertura: poche ripetizioni incontrate nelle posizioni rade (" + events + ")");
++	}
++
+ 	private static void reusedInstanceGame(Random rnd, Evaluator simpleNew, Evaluator simpleOld, int g) {
+ 		LegacyNegamax legacy = new LegacyNegamax(simpleOld, 3, true, 1 << 13, true, Negamax.ORDER_DEFAULT);
+ 		Negamax fresh = new Negamax(simpleNew, 3, true, 1 << 13, true, Negamax.ORDER_DEFAULT, 1);
+ 		TestPositions.Game script = TestPositions.playGame(rnd, true, 40); // fornisce solo una linea di partenza realistica
+ 		State s = TestPositions.initial();
+-		List<Long> history = new ArrayList<>();
+-		history.add(FastState.hashOf(s));
++		PositionHistory history = new PositionHistory();
++		history.add(s);
+ 		int played = 0;
+ 		for (int ply = 0; ply < 40; ply++) {
+ 			Action expected = legacy.findBestMove(s, BIG_BUDGET, history);
+@@ -236,7 +286,7 @@
+ 			if (AshtonRules.wasCapture(s, next, play)) {
+ 				history.clear();
+ 			}
+-			history.add(FastState.hashOf(next));
++			history.add(next);
+ 			s = next;
+ 			played++;
+ 		}
+@@ -270,8 +320,8 @@
+ 		b[8][8] = it.unibo.ai.didattica.competition.tablut.domain.State.Pawn.BLACK;
+ 		b[1][1] = it.unibo.ai.didattica.competition.tablut.domain.State.Pawn.WHITE; // una pedina libera di muoversi senza sbloccare il Nero
+ 		white.setTurn(Turn.WHITE);
+-		List<Long> h = new ArrayList<>();
+-		h.add(FastState.hashOf(white));
++		PositionHistory h = new PositionHistory();
++		h.add(white);
+ 		for (Cfg cfg : CFGS) {
+ 			compare("stallo del Nero (Bianco muove) [" + cfg.name + "] d3", white, h, evNew, evOld, cfg, 3);
+ 			compare("stallo del Nero (Bianco muove) [" + cfg.name + "] d4", white, h, evNew, evOld, cfg, 4);
+@@ -288,8 +338,8 @@
+ 		c[8][7] = it.unibo.ai.didattica.competition.tablut.domain.State.Pawn.BLACK;
+ 		c[1][1] = it.unibo.ai.didattica.competition.tablut.domain.State.Pawn.BLACK; // pedina nera libera
+ 		black.setTurn(Turn.BLACK);
+-		h = new ArrayList<>();
+-		h.add(FastState.hashOf(black));
++		h = new PositionHistory();
++		h.add(black);
+ 		for (Cfg cfg : CFGS) {
+ 			compare("stallo del Bianco (Nero muove) [" + cfg.name + "] d3", black, h, evNew, evOld, cfg, 3);
+ 		}
+@@ -320,7 +370,7 @@
+ 			for (int k = 0; k < 8 && !game.positions.isEmpty(); k++) {
+ 				int i = rnd.nextInt(game.positions.size());
+ 				State s = game.positions.get(i);
+-				List<Long> h = game.histories.get(i);
++				PositionHistory h = game.histories.get(i);
+ 				boolean useNet = (k & 1) == 1;
+ 				Evaluator ev = useNet ? net : simple;
+ 				int depth = useNet ? 3 : 4;
+@@ -360,7 +410,7 @@
+ 			for (int k = 0; k < 6 && !game.positions.isEmpty(); k++) {
+ 				int i = rnd.nextInt(game.positions.size());
+ 				State s = game.positions.get(i);
+-				List<Long> h = game.histories.get(i);
++				PositionHistory h = game.histories.get(i);
+ 				FastState before = FastState.fromState(s);
+ 				boolean useNet = (k & 1) == 1;
+ 				// budget da 1 a 120 ms: il tempo scade in punti qualsiasi dell'albero
+@@ -399,7 +449,7 @@
+ 			for (int k = 0; k < 4 && !game.positions.isEmpty(); k++) {
+ 				int i = rnd.nextInt(game.positions.size());
+ 				State s = game.positions.get(i);
+-				List<Long> h = game.histories.get(i);
++				PositionHistory h = game.histories.get(i);
+ 				Negamax a = new Negamax(simple, 3, true, 1 << 13, true, Negamax.ORDER_DEFAULT, 1);
+ 				Negamax b = new Negamax(simple, 3, true, 1 << 13, true, Negamax.ORDER_DEFAULT, 1);
+ 				Negamax c = new Negamax(simple, 3, true, 1 << 13, true, Negamax.ORDER_DEFAULT, 1);
+@@ -407,14 +457,11 @@
+ 				FastState root = FastState.fromState(s);
+ 				FastState copy = root.duplicate();
+ 				int viaFastList = b.findBestMove(root, BIG_BUDGET, h);
+-				long[] arr = new long[h.size() + 3]; // capienza maggiore della lunghezza: conta historyLen, non arr.length
+-				for (int j = 0; j < h.size(); j++) {
+-					arr[j] = h.get(j);
+-				}
+-				Arrays.fill(arr, h.size(), arr.length, 0x5EEDL);
+-				int viaFastArray = c.findBestMove(root, BIG_BUDGET, arr, h.size());
++				PositionHistory spare = new PositionHistory(h.size() + 3); // capienza maggiore della lunghezza: conta la lunghezza, non la capienza
++				spare.addAll(h);
++				int viaFastArray = c.findBestMove(root, BIG_BUDGET, spare);
+ 				check(viaState != null && Move.fromAction(viaState) == viaFastList && viaFastList == viaFastArray,
+-						"API: State=" + viaState + " FastState(List)=" + Move.toString(viaFastList) + " FastState(long[])=" + Move.toString(viaFastArray));
++						"API: State=" + viaState + " FastState=" + Move.toString(viaFastList) + " FastState(capienza maggiore)=" + Move.toString(viaFastArray));
+ 				check(root.samePosition(copy) && root.zobristHash == copy.zobristHash, "API: la FastState passata e' stata modificata");
+ 				check(viaState == null || viaState.getTurn() == s.getTurn(), "API: il turno dell'Action coincide con quello della radice");
+ 				check(a.lastNodeCount == b.lastNodeCount && b.lastNodeCount == c.lastNodeCount, "API: nodi diversi tra le tre forme");
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/SearchOptimizationsCheck.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/SearchOptimizationsCheck.java
+@@ -12,6 +12,8 @@
+ import it.unibo.ai.didattica.competition.tablut.domain.Action;
+ import it.unibo.ai.didattica.competition.tablut.domain.State;
+ import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
++import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
+ import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
+ 
+ /**
+@@ -121,30 +123,31 @@
+ 	 * (Non si puo' usare una seconda istanza di Negamax come oracolo: il suo orologio interno interrompe la ricerca
+ 	 * dopo 2048 nodi se non e' stata avviata da findBestMove.)
+ 	 */
+-	static double exactValueOfMove(Evaluator ev, State root, Action m, int d, List<Long> history) {
++	static double exactValueOfMove(Evaluator ev, State root, Action m, int d, PositionHistory history) {
+ 		int mySign = root.getTurn() == Turn.WHITE ? 1 : -1;
+ 		State child = AshtonRules.applyMove(root, m);
+-		return -oracleChild(ev, root, child, m, d - 1, -INF, INF, -mySign, new ArrayList<>(history));
++		return -oracleChild(ev, root, child, m, d - 1, -INF, INF, -mySign, history.copy());
+ 	}
+ 
+ 	static double oracleChild(Evaluator ev, State parent, State child, Action a, int depth, double alpha, double beta,
+-			int persp, List<Long> history) {
+-		long h = ZobristHasher.fullHash(child);
++			int persp, PositionHistory history) {
++		// chiave ESATTA calcolata in modo INDEPENDENTE da FastState e da Negamax (stesso oracolo storico, ma senza hash)
++		final long[] h = TestPositions.exactKey(child);
+ 		if (AshtonRules.wasCapture(parent, child, a)) {
+-			List<Long> fresh = new ArrayList<>();
+-			fresh.add(h);
++			PositionHistory fresh = new PositionHistory();
++			fresh.add(h[0], h[1], h[2]);
+ 			return oracle(ev, child, depth, alpha, beta, persp, fresh);
+ 		}
+-		if (history.contains(h)) {
++		if (history.contains(h[0], h[1], h[2])) {
+ 			return 0; // ripetizione = pareggio
+ 		}
+-		history.add(h);
++		history.add(h[0], h[1], h[2]);
+ 		double v = oracle(ev, child, depth, alpha, beta, persp, history);
+-		history.remove(history.size() - 1);
++		history.removeLast();
+ 		return v;
+ 	}
+ 
+-	static double oracle(Evaluator ev, State s, int depth, double alpha, double beta, int persp, List<Long> history) {
++	static double oracle(Evaluator ev, State s, int depth, double alpha, double beta, int persp, PositionHistory history) {
+ 		Turn t = s.getTurn();
+ 		if (t == Turn.WHITEWIN) {
+ 			return persp * (Negamax.WIN_SCORE + depth);
+@@ -340,7 +343,7 @@
+ 						}
+ 					}
+ 					int persp = side == 0 ? 1 : -1;
+-					n.installForTest(FastState.fromState(root), new ArrayList<Long>(), 1);
++					n.installForTest(FastState.fromState(root), PositionHistory.empty(), 1);
+ 					n.negamax(1, -INF, INF, persp, 0);
+ 					checks++;
+ 					if (!seen.equals(expected)) {
+@@ -428,13 +431,13 @@
+ 				}
+ 				// l'alpha-beta di Negamax deve coincidere con l'oracolo indipendente (valida anche la baseline)
+ 				if (cfg == CFGS[0]) {
+-					double vb = exactValueOfMove(ev, pos, mBase, base.lastDepthReached, new ArrayList<Long>());
++					double vb = exactValueOfMove(ev, pos, mBase, base.lastDepthReached, PositionHistory.empty());
+ 					if (Math.abs(vb - base.lastScore) > 1e-9) {
+ 						fail(where + ": l'alpha-beta di Negamax diverge dall'oracolo (" + base.lastScore + " vs " + vb + ")");
+ 					}
+ 				}
+ 				// la mossa del candidato deve essere ottima: valore esatto == valore di radice
+-				double v = exactValueOfMove(ev, pos, mCand, cand.lastDepthReached, new ArrayList<Long>());
++				double v = exactValueOfMove(ev, pos, mCand, cand.lastDepthReached, PositionHistory.empty());
+ 				if (Math.abs(v - cand.lastScore) > 1e-9) {
+ 					fail(where + ": la mossa " + mCand.getFrom() + "->" + mCand.getTo() + " vale " + v + " ma il valore di radice e' "
+ 							+ cand.lastScore);
+@@ -442,7 +445,7 @@
+ 				// e nessuna altra mossa deve valere di piu' (verifica indipendente del massimo)
+ 				if (d <= 3 && (cfg == CFGS[3] || cfg.exhaustive)) {
+ 					for (Action m : AshtonRules.generateMoves(pos)) {
+-						double vm = exactValueOfMove(ev, pos, m, cand.lastDepthReached, new ArrayList<Long>());
++						double vm = exactValueOfMove(ev, pos, m, cand.lastDepthReached, PositionHistory.empty());
+ 						if (vm > cand.lastScore + 1e-9) {
+ 							fail(where + ": esiste una mossa migliore " + m.getFrom() + "->" + m.getTo() + " (" + vm + " > "
+ 									+ cand.lastScore + ")");
+@@ -607,11 +610,11 @@
+ 	static void checkRepetitionHistory(Cfg cfg) {
+ 		Object[] cyc = buildCycle();
+ 		State p0 = (State) cyc[0], p1 = (State) cyc[1], p2 = (State) cyc[2], p3 = (State) cyc[3];
+-		List<Long> history = new ArrayList<>();
+-		history.add(ZobristHasher.fullHash(p0));
+-		history.add(ZobristHasher.fullHash(p1));
+-		history.add(ZobristHasher.fullHash(p2));
+-		history.add(ZobristHasher.fullHash(p3));
++		PositionHistory history = new PositionHistory();
++		TestPositions.addTo(history, p0);
++		TestPositions.addTo(history, p1);
++		TestPositions.addTo(history, p2);
++		TestPositions.addTo(history, p3);
+ 		Evaluator ev = new SimpleEvaluator();
+ 		int before = failures;
+ 		long reps = 0;
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/client/NegamaxClientArgsCheck.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/client/NegamaxClientArgsCheck.java
+@@ -11,6 +11,7 @@
+ import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+ import it.unibo.ai.didattica.competition.tablut.engine.Move;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ 
+ import java.lang.reflect.Field;
+ 
+@@ -84,7 +85,7 @@
+ 			check(((Mcts) TablutNegamaxClient.buildSearcher("mcts", "maxnodes=1234", ev, 1, 0, Negamax.ORDER_DEFAULT, 12, false)).config().maxNodes == 1234,
+ 					"mcts: tetto nodi esplicito rispettato");
+ 			final FastState root = FastState.fromState(new StateTablut());
+-			final int mv = m.setThreads(1).setSafetyMarginMillis(0).findBestMove(root, 150, new long[] { root.zobristHash }, 1);
++			final int mv = m.setThreads(1).setSafetyMarginMillis(0).findBestMove(root, 150, PositionHistory.of(root));
+ 			check(mv != Move.NONE && m.lastSims > 0, "mcts dal client: restituisce una mossa dopo aver simulato");
+ 			m.shutdown();
+ 		}
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/client/TablutNegamaxClient.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/client/TablutNegamaxClient.java
+@@ -2,8 +2,6 @@
+ 
+ import java.io.IOException;
+ import java.net.UnknownHostException;
+-import java.util.ArrayList;
+-import java.util.List;
+ 
+ import it.unibo.ai.didattica.competition.tablut.aiplayer.CachingEvaluator;
+ import it.unibo.ai.didattica.competition.tablut.aiplayer.Evaluator;
+@@ -22,6 +20,7 @@
+ import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+ import it.unibo.ai.didattica.competition.tablut.engine.Move;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ 
+ /**
+  * Client che gioca usando una ricerca invece di mosse casuali: Negamax + alpha-beta (default) oppure Monte Carlo Tree Search
+@@ -59,7 +58,8 @@
+ 	// cattura e' pareggio"). Aggiornata ad ogni stato osservato dal server,
+ 	// azzerata ad ogni cattura (nessuna posizione precedente puo' piu'
+ 	// ripresentarsi una volta sparita una pedina).
+-	private final List<Long> historySinceLastCapture = new ArrayList<>();
++	/** Posizioni realmente occorse dall'ultima cattura (chiavi ESATTE, non hash): la storia per la regola di ripetizione. */
++	private final PositionHistory historySinceLastCapture = new PositionHistory();
+ 	private int lastObservedPieceCount = -1;
+ 
+ 	/** Costruttore "storico": nessun file di pesi -> usa SimpleEvaluator. */
+@@ -379,12 +379,7 @@
+ 				long budgetMillis = this.timeoutSeconds * 1000L;
+ 				long start = System.currentTimeMillis();
+ 
+-				final int histLen = this.historySinceLastCapture.size();
+-				final long[] history = new long[histLen];
+-				for (int i = 0; i < histLen; i++) {
+-					history[i] = this.historySinceLastCapture.get(i);
+-				}
+-				int move = this.searcher.findBestMove(position, budgetMillis, history, histLen);
++				int move = this.searcher.findBestMove(position, budgetMillis, this.historySinceLastCapture);
+ 				Action chosen = move == Move.NONE ? null : Move.toAction(move, turn);
+ 
+ 				long elapsed = System.currentTimeMillis() - start;
+@@ -436,7 +431,7 @@
+ 		if (lastObservedPieceCount >= 0 && pieceCount < lastObservedPieceCount) {
+ 			historySinceLastCapture.clear();
+ 		}
+-		historySinceLastCapture.add(position.zobristHash);
++		historySinceLastCapture.add(position);
+ 		lastObservedPieceCount = pieceCount;
+ 	}
+ }
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/experiments/MctsBench.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/experiments/MctsBench.java
+@@ -8,6 +8,7 @@
+ import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+ import it.unibo.ai.didattica.competition.tablut.engine.Move;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ 
+ /**
+  * Misure di costo dell'{@link Mcts} (non e' un test: stampa numeri).
+@@ -56,17 +57,17 @@
+ 		final boolean doMemory = only.isEmpty() || only.equals("memory");
+ 		final boolean doCache = only.isEmpty() || only.equals("cache");
+ 		final FastState start = FastState.fromState(new StateTablut());
+-		final long[] hist = { start.zobristHash };
++		final PositionHistory hist = PositionHistory.of(start);
+ 
+ 		System.out.println("== throughput dalla posizione iniziale (1000 ms per misura, margine 0) ==");
+ 		for (int e = 0; doThroughput && e < evals.size(); e++) {
+ 			for (String cfg : new String[] { "expand=1", "expand=0", "expand=1,cache=0" }) {
+ 				for (int threads : new int[] { 1, 2 }) {
+ 					final Mcts m = new Mcts(evals.get(e), MctsConfig.parse(cfg + ",reuse=false"), threads).setSafetyMarginMillis(0);
+-					m.findBestMove(start, 300, hist, 1); // riscaldamento del JIT
++					m.findBestMove(start, 300, hist); // riscaldamento del JIT
+ 					m.clearTree();
+ 					final long t0 = System.nanoTime();
+-					final int mv = m.findBestMove(start, 1000, hist, 1);
++					final int mv = m.findBestMove(start, 1000, hist);
+ 					final double s = (System.nanoTime() - t0) / 1e9;
+ 					final long total = m.lastEvals + m.lastCacheHits;
+ 					System.out.printf("%-8s %-18s thread=%d: %8.0f sim/s  %9.0f valutazioni/s (+%2.0f%% dalla cache)  %7d nodi  mossa=%s%n", names.get(e), cfg, threads, m.lastSims / s,
+@@ -82,7 +83,7 @@
+ 				final long n = 60_000;
+ 				final Mcts m = new Mcts(evals.get(e), MctsConfig.parse(cfg + ",reuse=false,cache=0,maxnodes=" + n), 1).setSafetyMarginMillis(0);
+ 				final long before = usedHeap();
+-				m.findBestMove(start, 600000, hist, 1);
++				m.findBestMove(start, 600000, hist);
+ 				final long after = usedHeap();
+ 				final long nodes = m.lastNodes;
+ 				System.out.printf("%-8s %-18s: %d nodi, %.1f MB -> %.0f byte/nodo (sim %d)%n", names.get(e), cfg, nodes, (after - before) / 1048576.0, nodes > 0 ? (double) (after - before) / nodes : 0.0,
+@@ -113,7 +114,7 @@
+ 						final Mcts m = new Mcts(evals.get(e), MctsConfig.parse("expand=1,reuse=false,cache=" + log2), 1).setSafetyMarginMillis(0);
+ 						m.setMaxSims(sims);
+ 						final long t0 = System.nanoTime();
+-						m.findBestMove(p, 600000, new long[] { p.zobristHash }, 1);
++						m.findBestMove(p, 600000, PositionHistory.of(p));
+ 						t += (System.nanoTime() - t0) / 1e6;
+ 						hits += m.lastCacheHits;
+ 						total += m.lastCacheHits + m.lastEvals;
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/experiments/MctsTimingProbe.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/experiments/MctsTimingProbe.java
+@@ -13,6 +13,7 @@
+ import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
+ import it.unibo.ai.didattica.competition.tablut.engine.Move;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ import it.unibo.ai.didattica.competition.tablut.engine.UndoInfo;
+ 
+ /**
+@@ -49,18 +50,14 @@
+ 			final MoveSearcher opp = new NegamaxSearcher(new Negamax(new SimpleEvaluator(), 30, true, 1 << 20, true, Negamax.ORDER_DEFAULT, 1, false).setThreads(1)
+ 					.setSafetyMarginMillis(0));
+ 			final FastState cur = FastState.fromState(new StateTablut());
+-			final List<Long> hist = new ArrayList<>();
+-			hist.add(cur.zobristHash);
++			final PositionHistory hist = new PositionHistory();
++			hist.add(cur);
+ 			long maxOver = Long.MIN_VALUE, maxNodes = 0;
+ 			int moves = 0, late = 0;
+ 			for (int ply = 0; ply < 160 && cur.winner == FastState.WINNER_NONE; ply++) {
+ 				final boolean mctsTurn = (cur.turn == BoardConstants.WHITE_TURN) == mctsWhite;
+-				final long[] h = new long[hist.size()];
+-				for (int i = 0; i < h.length; i++) {
+-					h[i] = hist.get(i);
+-				}
+ 				final long t0 = System.nanoTime();
+-				final int mv = mctsTurn ? mcts.findBestMove(cur, budget, h, h.length) : opp.findBestMove(cur, oppMs, h, h.length);
++				final int mv = mctsTurn ? mcts.findBestMove(cur, budget, hist) : opp.findBestMove(cur, oppMs, hist);
+ 				final long ms = (System.nanoTime() - t0) / 1_000_000L;
+ 				if (mv == Move.NONE) {
+ 					break;
+@@ -80,10 +77,10 @@
+ 				if (u.wasCapture()) {
+ 					hist.clear();
+ 				}
+-				if (hist.contains(cur.zobristHash)) {
++				if (hist.contains(cur)) {
+ 					break; // ripetizione: pareggio
+ 				}
+-				hist.add(cur.zobristHash);
++				hist.add(cur);
+ 			}
+ 			System.out.printf("partita %d (MCTS %s): %d mosse MCTS, sforamento massimo %d ms, %d mosse oltre +100 ms, nodi massimi %d%n", g + 1, mctsWhite ? "Bianco" : "Nero", moves,
+ 					maxOver, late, maxNodes);
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/experiments/OrderingBench.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/experiments/OrderingBench.java
+@@ -14,6 +14,7 @@
+ import it.unibo.ai.didattica.competition.tablut.domain.State;
+ import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
+ import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ 
+ /**
+  * Misura quanti nodi e quanto tempo servono varie modalita' di ordinamento delle mosse, a profondita' FISSA, su posizioni di
+@@ -83,7 +84,7 @@
+ 					n = new Negamax(ev, depth, true, 1 << 20, true, mode).setThreads(1); // TT, history e killer vuote a ogni ricerca
+ 				}
+ 				long t0 = System.nanoTime();
+-				n.findBestMove(s, 100_000_000L, new ArrayList<Long>());
++				n.findBestMove(s, 100_000_000L, PositionHistory.empty());
+ 				nanos += System.nanoTime() - t0;
+ 				nodes += n.lastNodeCount;
+ 				if (scores != null) {
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/experiments/OvershootBench.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/experiments/OvershootBench.java
+@@ -10,6 +10,7 @@
+ import it.unibo.ai.didattica.competition.tablut.aiplayer.OrderingSpec;
+ import it.unibo.ai.didattica.competition.tablut.aiplayer.SimpleEvaluator;
+ import it.unibo.ai.didattica.competition.tablut.domain.State;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ 
+ /**
+  * Misura di quanto {@code Negamax.findBestMove} SFORA il tempo che gli e' stato assegnato: con margine 0 e budget B, lo sforo e'
+@@ -36,13 +37,13 @@
+ 		Negamax n = new Negamax(ev, 40, true, Negamax.DEFAULT_TT_SIZE, true, order, threads, false).setThreads(threads).setSafetyMarginMillis(0);
+ 		try {
+ 			// riscaldamento del JIT (due ricerche brevi)
+-			n.findBestMove(positions.get(0), 300L, new ArrayList<Long>());
+-			n.findBestMove(positions.get(1), 300L, new ArrayList<Long>());
++			n.findBestMove(positions.get(0), 300L, PositionHistory.empty());
++			n.findBestMove(positions.get(1), 300L, PositionHistory.empty());
+ 			List<Long> over = new ArrayList<>();
+ 			int short_ = 0;
+ 			for (int i = 0; i < searches && i < positions.size(); i++) {
+ 				long t0 = System.nanoTime();
+-				n.findBestMove(positions.get(i), budget, new ArrayList<Long>());
++				n.findBestMove(positions.get(i), budget, PositionHistory.empty());
+ 				long used = (System.nanoTime() - t0) / 1_000_000L;
+ 				if (used < budget - 100) {
+ 					short_++; // trovata una vittoria forzata: non misura il tempo
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/experiments/SearchSpeedBench.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/experiments/SearchSpeedBench.java
+@@ -13,6 +13,7 @@
+ import it.unibo.ai.didattica.competition.tablut.domain.State;
+ import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
+ import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ 
+ /**
+  * Misura la velocita' della ricerca. Usa SOLO l'API pubblica con {@code State}/{@code Action} (che esiste identica prima e
+@@ -61,7 +62,7 @@
+ 		int n = quick ? Math.min(positions.size(), 6) : positions.size();
+ 		for (int i = 0; i < n; i++) {
+ 			Negamax nm = new Negamax(ev, depth, true, 1 << 20).setThreads(1);
+-			nm.findBestMove(positions.get(i), 100_000_000L, new ArrayList<Long>());
++			nm.findBestMove(positions.get(i), 100_000_000L, PositionHistory.empty());
+ 			r.nodes += nm.lastNodeCount;
+ 		}
+ 		r.seconds = (System.nanoTime() - t0) / 1e9;
+@@ -79,7 +80,7 @@
+ 		for (int i = 0; i < n; i++) {
+ 			Negamax nm = new Negamax(ev, 40, true, 1 << 20).setThreads(1);
+ 			long t0 = System.nanoTime();
+-			nm.findBestMove(positions.get(i), budgetMs + 300, new ArrayList<Long>()); // +300: il margine di sicurezza del motore
++			nm.findBestMove(positions.get(i), budgetMs + 300, PositionHistory.empty()); // +300: il margine di sicurezza del motore
+ 			ms += (System.nanoTime() - t0) / 1_000_000;
+ 			nodes += nm.lastNodeCount;
+ 			sumDepth += nm.lastDepthReached;
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/experiments/TTBench.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/experiments/TTBench.java
+@@ -1,6 +1,5 @@
+ package it.unibo.ai.didattica.competition.tablut.experiments;
+ 
+-import java.util.ArrayList;
+ import java.util.List;
+ 
+ import it.unibo.ai.didattica.competition.tablut.aiplayer.Evaluator;
+@@ -9,6 +8,7 @@
+ import it.unibo.ai.didattica.competition.tablut.aiplayer.OrderingSpec;
+ import it.unibo.ai.didattica.competition.tablut.aiplayer.SimpleEvaluator;
+ import it.unibo.ai.didattica.competition.tablut.domain.State;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ 
+ /**
+  * Misura l'effetto della DIMENSIONE e della POLITICA della transposition table a profondita' fissa (deterministico, un thread):
+@@ -47,7 +47,7 @@
+ 				Negamax n = new Negamax(ev, depth, true, 1 << log2, true, order, 1, two);
+ 				for (State s : line) {
+ 					long t0 = System.nanoTime();
+-					n.findBestMove(s, 100_000_000L, new ArrayList<Long>());
++					n.findBestMove(s, 100_000_000L, PositionHistory.empty());
+ 					nanos += System.nanoTime() - t0;
+ 					nodes += n.lastNodeCount;
+ 					scores[k++] = n.lastScore;
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/experiments/ValueDiffProbe.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/experiments/ValueDiffProbe.java
+@@ -1,12 +1,12 @@
+ package it.unibo.ai.didattica.competition.tablut.experiments;
+ 
+-import java.util.ArrayList;
+ import java.util.List;
+ 
+ import it.unibo.ai.didattica.competition.tablut.aiplayer.Negamax;
+ import it.unibo.ai.didattica.competition.tablut.aiplayer.OrderingSpec;
+ import it.unibo.ai.didattica.competition.tablut.aiplayer.SimpleEvaluator;
+ import it.unibo.ai.didattica.competition.tablut.domain.State;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ 
+ /**
+  * Per le posizioni di {@link OrderingBench} in cui il valore di radice a profondita' fissa (TT accesa, istanza nuova) dipende
+@@ -48,7 +48,7 @@
+ 
+ 	static double value(SimpleEvaluator ev, int depth, boolean tt, int order, State s) {
+ 		Negamax n = new Negamax(ev, depth, tt, 1 << 20, true, order, 1, false).setThreads(1);
+-		n.findBestMove(s, 100_000_000L, new ArrayList<Long>());
++		n.findBestMove(s, 100_000_000L, PositionHistory.empty());
+ 		return n.lastScore;
+ 	}
+ }
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/selftest/TestPositions.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/selftest/TestPositions.java
+@@ -12,6 +12,7 @@
+ import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
+ import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
+ import it.unibo.ai.didattica.competition.tablut.engine.BoardConstants;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ 
+ /**
+  * Generatori di posizioni per i test. Usano SOLO il motore storico ({@link AshtonRules}, {@link ZobristHasher}), mai
+@@ -120,22 +121,55 @@
+ 	public static final class Game {
+ 		/** Posizioni NON terminali visitate, nell'ordine. */
+ 		public final List<State> positions = new ArrayList<>();
+-		/** Per ciascuna posizione, gli hash ({@code ZobristHasher}) delle posizioni dall'ultima cattura, ATTUALE INCLUSA (come fa il client). */
+-		public final List<List<Long>> histories = new ArrayList<>();
++		/**
++		 * Per ciascuna posizione, le posizioni dall'ultima cattura, ATTUALE INCLUSA (come fa il client), come chiavi ESATTE calcolate
++		 * direttamente dallo {@link State} da {@link TestPositions#exactKey(State)} (mai da {@code FastState}: l'oracolo resta indipendente).
++		 */
++		public final List<PositionHistory> histories = new ArrayList<>();
++	}
++
++	/**
++	 * Chiave ESATTA di uno {@link State}, calcolata in modo INDIPENDENTE da {@code FastState}: 2 bit per cella (vuota o trono 0, Bianco 1, Nero 2,
++	 * Re 3) con la cella {@code sq = riga*9 + colonna} nel long {@code sq/32} a partire dal bit {@code 2*(sq%32)}, piu' il bit 34 del terzo long se
++	 * e' di turno il Nero e la partita non e' finita. {@code FastState.key0..key2} deve darne sempre lo stesso risultato.
++	 *
++	 * @return {@code {key0, key1, key2}}
++	 */
++	public static long[] exactKey(State s) {
++		final long[] k = new long[3];
++		final Pawn[][] board = s.getBoard();
++		for (int r = 0; r < 9; r++) {
++			for (int c = 0; c < 9; c++) {
++				final int sq = r * 9 + c;
++				final Pawn p = board[r][c];
++				final long code = p == Pawn.WHITE ? 1L : p == Pawn.BLACK ? 2L : p == Pawn.KING ? 3L : 0L;
++				k[sq / 32] |= code << (2 * (sq % 32));
++			}
++		}
++		if (s.getTurn() == Turn.BLACK) {
++			k[2] |= 1L << 34;
++		}
++		return k;
++	}
++
++	/** Accoda a {@code h} la posizione di {@code s} con la chiave esatta indipendente di {@link #exactKey(State)}. */
++	public static void addTo(PositionHistory h, State s) {
++		final long[] k = exactKey(s);
++		h.add(k[0], k[1], k[2]);
+ 	}
+ 
+ 	public static Game playGame(Random rnd, boolean greedy, int maxPlies) {
+ 		Game g = new Game();
+ 		State s = initial();
+-		List<Long> history = new ArrayList<>();
+-		history.add(ZobristHasher.fullHash(s));
++		PositionHistory history = new PositionHistory();
++		addTo(history, s);
+ 		for (int ply = 0; ply < maxPlies && !AshtonRules.isTerminal(s); ply++) {
+ 			List<Action> moves = AshtonRules.generateMoves(s);
+ 			if (moves.isEmpty()) {
+ 				break;
+ 			}
+ 			g.positions.add(s);
+-			g.histories.add(new ArrayList<>(history));
++			g.histories.add(history.copy());
+ 			Action chosen = moves.get(rnd.nextInt(moves.size()));
+ 			if (greedy) {
+ 				for (int tries = 0; tries < 6; tries++) {
+@@ -152,7 +186,7 @@
+ 				if (AshtonRules.wasCapture(s, next, chosen)) {
+ 					history.clear();
+ 				}
+-				history.add(ZobristHasher.fullHash(next));
++				addTo(history, next);
+ 			}
+ 			s = next;
+ 		}
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/training/CnnSelfPlayTrainer.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/training/CnnSelfPlayTrainer.java
+@@ -28,6 +28,7 @@
+ import it.unibo.ai.didattica.competition.tablut.domain.State;
+ import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
+ import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ 
+ /**
+  * Allena un {@link CnnEvaluator} con self-play e TD(lambda) semi-gradiente: LO STESSO schema di {@link SelfPlayTrainer} (TD-Gammon,
+@@ -347,7 +348,7 @@
+ 			};
+ 			SelfPlayTrainer.MoveChooser chooser = new SelfPlayTrainer.MoveChooser() {
+ 				@Override
+-				public Action choose(State s, List<Long> history) {
++				public Action choose(State s, PositionHistory history) {
+ 					List<Action> legal = AshtonRules.generateMoves(s);
+ 					long budget = minMoveMs + (maxMoveMs > minMoveMs ? Math.abs(rnd.nextLong() % (maxMoveMs - minMoveMs + 1)) : 0);
+ 					Action move;
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/training/GameTracker.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/training/GameTracker.java
+@@ -1,13 +1,12 @@
+ package it.unibo.ai.didattica.competition.tablut.training;
+ 
+-import java.util.ArrayList;
+-import java.util.List;
+ 
+ import it.unibo.ai.didattica.competition.tablut.aiplayer.AshtonRules;
+ import it.unibo.ai.didattica.competition.tablut.domain.Action;
+ import it.unibo.ai.didattica.competition.tablut.domain.State;
+ import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ 
+ /**
+  * Regole di FINE PARTITA per il self-play, coerenti con la ricerca ({@code Negamax}) e con la regola ufficiale. Prima di
+@@ -55,19 +54,20 @@
+ 		}
+ 	}
+ 
+-	private final List<Long> history = new ArrayList<>();
++	/** Posizioni dall'ultima cattura come chiavi ESATTE: la regola di ripetizione non puo' essere ingannata da una collisione di hash. */
++	private final PositionHistory history = new PositionHistory();
+ 	private boolean repetitionDraw;
+ 
+ 	/** @param initial posizione di partenza (viene inserita nella storia) */
+ 	public GameTracker(State initial) {
+-		history.add(FastState.hashOf(initial));
++		history.add(initial);
+ 	}
+ 
+ 	/**
+-	 * Hash delle posizioni dall'ultima cattura, compresa la corrente: va passata a
+-	 * {@code Negamax.findBestMove(stato, tempo, storia)}. E' la lista VIVA del tracker (la ricerca ne fa una copia).
++	 * Le posizioni dall'ultima cattura, compresa la corrente, come chiavi esatte: va passata a
++	 * {@code Negamax.findBestMove(stato, tempo, storia)}. E' la storia VIVA del tracker (la ricerca ne fa una copia).
+ 	 */
+-	public List<Long> history() {
++	public PositionHistory history() {
+ 		return history;
+ 	}
+ 
+@@ -86,14 +86,14 @@
+ 		if (AshtonRules.isTerminal(next)) {
+ 			return next;
+ 		}
+-		long h = FastState.hashOf(next);
++		final FastState nextPosition = FastState.fromState(next);
+ 		if (AshtonRules.wasCapture(state, next, move)) {
+ 			history.clear();
+-			history.add(h);
+-		} else if (history.contains(h)) {
++			history.add(nextPosition);
++		} else if (history.contains(nextPosition)) {
+ 			repetitionDraw = true;
+ 		} else {
+-			history.add(h);
++			history.add(nextPosition);
+ 		}
+ 		return next;
+ 	}
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/training/SearchArena.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/training/SearchArena.java
+@@ -171,13 +171,8 @@
+ 				}
+ 				final boolean whiteToMove = s.getTurn() == Turn.WHITE;
+ 				final MoveSearcher who = whiteToMove ? sw : sb;
+-				final List<Long> h = tracker.history();
+-				final long[] hist = new long[h.size()];
+-				for (int i = 0; i < hist.length; i++) {
+-					hist[i] = h.get(i);
+-				}
+ 				final long t0 = System.nanoTime();
+-				final int mv = who.findBestMove(FastState.fromState(s), ms, hist, hist.length);
++				final int mv = who.findBestMove(FastState.fromState(s), ms, tracker.history());
+ 				(whiteToMove ? statsW : statsB).add(who, (System.nanoTime() - t0) / 1e9);
+ 				if (mv == Move.NONE) {
+ 					gr.illegal++;
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/training/SearchLabeler.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/training/SearchLabeler.java
+@@ -23,6 +23,7 @@
+ import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
+ import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
+ import it.unibo.ai.didattica.competition.tablut.engine.FastState;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ import it.unibo.ai.didattica.competition.tablut.engine.Move;
+ 
+ /**
+@@ -135,7 +136,7 @@
+ 		}
+ 		Negamax ng = new Negamax(ev, depth, true, 1 << ttLog2, true, Negamax.ORDER_DEFAULT, 1, false);
+ 		ng.setSafetyMarginMillis(0);
+-		int mv = ng.findBestMove(root, MAX_MS, new long[] { root.zobristHash }, 1);
++		int mv = ng.findBestMove(root, MAX_MS, PositionHistory.of(root));
+ 		if (mv == Move.NONE) {
+ 			throw new IllegalArgumentException("nessuna mossa legale");
+ 		}
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/training/SelfPlayRulesCheck.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/training/SelfPlayRulesCheck.java
+@@ -11,12 +11,13 @@
+ import it.unibo.ai.didattica.competition.tablut.aiplayer.NeuralEvaluator;
+ import it.unibo.ai.didattica.competition.tablut.aiplayer.SimpleEvaluator;
+ import it.unibo.ai.didattica.competition.tablut.aiplayer.TablutFeatures;
+-import it.unibo.ai.didattica.competition.tablut.aiplayer.ZobristHasher;
+ import it.unibo.ai.didattica.competition.tablut.domain.Action;
+ import it.unibo.ai.didattica.competition.tablut.domain.State;
+ import it.unibo.ai.didattica.competition.tablut.domain.State.Pawn;
+ import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
+ import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
++import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
+ 
+ /**
+  * Collauda le regole di fine partita del self-play ({@link GameTracker}, {@link SelfPlayTrainer#playGame}):
+@@ -207,8 +208,8 @@
+ 				if (legal.isEmpty()) {
+ 					break;
+ 				}
+-				// contratto con la ricerca: la storia contiene gli hash dall'ultima cattura, posizione corrente compresa
+-				List<Long> expectedHashes = expectedHistory(states);
++				// contratto con la ricerca: la storia contiene le chiavi esatte dall'ultima cattura, posizione corrente compresa
++				PositionHistory expectedHashes = expectedHistory(states);
+ 				if (!tracker.history().equals(expectedHashes)) {
+ 					fail("storia del tracker diversa dall'attesa (gioco " + g + ", semi-mossa " + ply + "): " + tracker.history().size() + " vs "
+ 							+ expectedHashes.size());
+@@ -242,17 +243,17 @@
+ 				failures == before ? "OK  " : "FAIL", "[tracker vs oracolo]", games, moves, repetitions, captureResets);
+ 	}
+ 
+-	/** Hash attesi: le posizioni dall'ultima cattura (oracolo = conteggio pezzi), la corrente compresa. */
+-	static List<Long> expectedHistory(List<State> states) {
++	/** Storia attesa (chiavi esatte): le posizioni dall'ultima cattura (oracolo = conteggio pezzi), la corrente compresa. */
++	static PositionHistory expectedHistory(List<State> states) {
+ 		int start = 0;
+ 		for (int i = 1; i < states.size(); i++) {
+ 			if (pieces(states.get(i)) < pieces(states.get(i - 1))) {
+ 				start = i;
+ 			}
+ 		}
+-		List<Long> h = new ArrayList<>();
++		PositionHistory h = new PositionHistory();
+ 		for (int i = start; i < states.size(); i++) {
+-			h.add(ZobristHasher.fullHash(states.get(i)));
++			TestPositions.addTo(h, states.get(i)); // chiave esatta calcolata in modo INDIPENDENTE da FastState
+ 		}
+ 		return h;
+ 	}
+@@ -271,7 +272,7 @@
+ 		}
+ 
+ 		@Override
+-		public Action choose(State state, List<Long> history) {
++		public Action choose(State state, PositionHistory history) {
+ 			seen.add(state);
+ 			if (!history.equals(expectedHistoryOfCurrent(seen))) {
+ 				contractViolated = true;
+@@ -283,7 +284,7 @@
+ 		}
+ 
+ 		/** Gli stati passati al chooser sono consecutivi: l'oracolo li concatena con la mossa applicata dal tracker. */
+-		private List<Long> expectedHistoryOfCurrent(List<State> states) {
++		private PositionHistory expectedHistoryOfCurrent(List<State> states) {
+ 			return expectedHistory(states);
+ 		}
+ 	}
+@@ -359,7 +360,7 @@
+ 				}
+ 			}, new SelfPlayTrainer.MoveChooser() {
+ 				@Override
+-				public Action choose(State s, List<Long> h) {
++				public Action choose(State s, PositionHistory h) {
+ 					fail("il chooser non deve essere chiamato in una posizione senza mosse");
+ 					return null;
+ 				}
+@@ -380,7 +381,7 @@
+ 			}
+ 		}, new SelfPlayTrainer.MoveChooser() {
+ 			@Override
+-			public Action choose(State s, List<Long> h) {
++			public Action choose(State s, PositionHistory h) {
+ 				return AshtonRules.generateMoves(s).get(0);
+ 			}
+ 		}, true);
+@@ -422,7 +423,7 @@
+ 				}
+ 			}, new SelfPlayTrainer.MoveChooser() {
+ 				@Override
+-				public Action choose(State st, List<Long> h) {
++				public Action choose(State st, PositionHistory h) {
+ 					return win;
+ 				}
+ 			}, true);
+--- a/Tablut/src/it/unibo/ai/didattica/competition/tablut/training/SelfPlayTrainer.java
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/training/SelfPlayTrainer.java
+@@ -26,6 +26,7 @@
+ import it.unibo.ai.didattica.competition.tablut.domain.State;
+ import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
+ import it.unibo.ai.didattica.competition.tablut.domain.StateTablut;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
+ 
+ /**
+  * Allena {@link NeuralEvaluator} tramite self-play e TD(lambda) semi-gradient
+@@ -443,7 +444,7 @@
+ 
+ 	/** Sceglie la mossa. {@code historySinceLastCapture} va passata alla ricerca (si veda {@link GameTracker#history()}). */
+ 	interface MoveChooser {
+-		Action choose(State state, List<Long> historySinceLastCapture);
++		Action choose(State state, PositionHistory historySinceLastCapture);
+ 	}
+ 
+ 	/** Risultato di {@link #playGame}. */
+@@ -586,7 +587,7 @@
+ 			};
+ 			MoveChooser chooser = new MoveChooser() {
+ 				@Override
+-				public Action choose(State s, List<Long> historySinceLastCapture) {
++				public Action choose(State s, PositionHistory historySinceLastCapture) {
+ 					List<Action> legalMoves = AshtonRules.generateMoves(s);
+ 					long budget = minMoveMs + (maxMoveMs > minMoveMs ? rnd.nextLong() % (maxMoveMs - minMoveMs + 1) : 0);
+ 					if (budget < 0) {
+--- /dev/null
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/aiplayer/HistoryExactnessCheck.java
+@@ -0,0 +1,317 @@
++package it.unibo.ai.didattica.competition.tablut.aiplayer;
++
++import java.lang.reflect.Method;
++import java.util.Random;
++
++import it.unibo.ai.didattica.competition.tablut.domain.State;
++import it.unibo.ai.didattica.competition.tablut.engine.FastState;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
++import it.unibo.ai.didattica.competition.tablut.engine.UndoInfo;
++import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
++
++/**
++ * Verifica che la storia degli stati sia rappresentata con chiavi ESATTE e che due posizioni diverse non possano mai essere scambiate:
++ * (1) {@link PositionHistory}: contratto dell'API; (2) la chiave incrementale di {@link FastState} coincide con quella calcolata in modo
++ * INDEPENDENTE da {@link TestPositions#exactKey(State)} su migliaia di coppie posizione/mossa (terminali compresi); (3) la storia costruita
++ * come fa il client (aggiungi, svuota a ogni cattura) coincide con quella dell'oracolo indipendente lungo intere partite; (4) collisioni di
++ * hash FORZATE: posizioni diverse con lo stesso Zobrist non entrano mai nella storia come la stessa posizione; (5) per riflessione: nessuna
++ * API di ricerca o di tracciamento accetta piu' una storia come {@code long[]} o {@code List<Long>} di hash. Il rilevamento di ripetizioni
++ * di {@code Negamax} e {@code Mcts} con collisioni forzate e' in {@code RepetitionAndStalemateCheck} e {@code MctsSearchCheck}.
++ * Esce con codice 1 se qualcosa fallisce. Uso: {@code HistoryExactnessCheck [seme]}.
++ */
++public class HistoryExactnessCheck {
++
++	static int failures = 0;
++	static long checks = 0;
++
++	static void check(boolean ok, String what) {
++		checks++;
++		if (!ok) {
++			failures++;
++			if (failures <= 30) {
++				System.out.println("FALLITO: " + what);
++			}
++		}
++	}
++
++	static boolean sameKey(FastState f, long[] k) {
++		return f.key0 == k[0] && f.key1 == k[1] && f.key2 == k[2];
++	}
++
++	public static void main(String[] args) {
++		final long seed = args.length > 0 ? Long.parseLong(args[0]) : 1357L;
++		positionHistoryApi();
++		incrementalVersusIndependent(seed);
++		clientStyleHistories(seed + 1);
++		forcedCollisions(seed + 2);
++		noHashHistoryInApis();
++		negamaxPathStack(seed + 3);
++		callerHistoryNotModified(seed + 4);
++		mctsTreeReuseRespectsHistory(seed + 5);
++		System.out.println(failures == 0 ? "=== HISTORY EXACTNESS CHECK OK (" + checks + " verifiche) ===" : "=== HISTORY EXACTNESS CHECK: " + failures + " FALLIMENTI su " + checks + " verifiche ===");
++		System.exit(failures == 0 ? 0 : 1);
++	}
++
++	// ---- (1) contratto di PositionHistory ------------------------------------------------------------------------------------------------
++	static void positionHistoryApi() {
++		final FastState a = new FastState();
++		final int[] buf = new int[FastState.MAX_MOVES];
++		final FastState b = FastState.copyOf(a);
++		b.makeMove(buf[0] = firstMove(a, buf), new UndoInfo());
++		final FastState c = FastState.copyOf(b);
++		c.makeMove(firstMove(b, buf), new UndoInfo());
++
++		PositionHistory h = new PositionHistory();
++		check(h.isEmpty() && h.size() == 0 && !h.contains(a), "storia nuova: vuota");
++		h.add(a);
++		h.add(b);
++		check(h.size() == 2 && h.contains(a) && h.contains(b) && !h.contains(c), "add/contains");
++		check(h.endsWith(b) && !h.endsWith(a), "endsWith guarda solo l'ultima posizione");
++		check(h.key0(0) == a.key0 && h.key1(0) == a.key1 && h.key2(0) == a.key2 && h.key2(1) == b.key2, "chiavi per indice");
++		final PositionHistory copy = h.copy();
++		h.add(c);
++		check(copy.size() == 2 && h.size() == 3 && !copy.contains(c), "copy e' indipendente dall'originale");
++		check(copy.equals(PositionHistory.of(a, b)) && !copy.equals(h) && copy.hashCode() == PositionHistory.of(a, b).hashCode(), "equals/hashCode per contenuto");
++		h.removeLast();
++		check(h.equals(copy), "removeLast");
++		h.clear();
++		check(h.isEmpty() && !h.contains(a), "clear");
++		boolean thrown = false;
++		try {
++			h.removeLast();
++		} catch (IllegalStateException e) {
++			thrown = true;
++		}
++		check(thrown, "removeLast su storia vuota lancia");
++		thrown = false;
++		try {
++			h.key0(0);
++		} catch (IndexOutOfBoundsException e) {
++			thrown = true;
++		}
++		check(thrown, "indice fuori dai limiti lancia");
++		// crescita oltre la capacita' iniziale
++		final PositionHistory big = new PositionHistory(2);
++		for (int i = 0; i < 1000; i++) {
++			big.add(i, i * 3L, i * 7L);
++		}
++		check(big.size() == 1000 && big.contains(999, 2997, 6993) && !big.contains(999, 2997, 6994) && !big.contains(1000, 3000, 7000), "crescita e contains su 1000 voci");
++		// copyKeysTo: stesso formato, con spostamento, senza toccare il resto
++		final long[] dst = new long[3 * 6];
++		java.util.Arrays.fill(dst, -1L);
++		final PositionHistory two = PositionHistory.of(a, b);
++		check(two.copyKeysTo(dst, 1) == 2 && dst[0] == -1 && dst[3] == a.key0 && dst[5] == a.key2 && dst[6] == b.key0 && dst[9] == -1, "copyKeysTo");
++		// una posizione si distingue da un'altra anche se differisce in UNA sola parola della chiave
++		final PositionHistory one = new PositionHistory();
++		one.add(1L, 2L, 3L);
++		check(one.contains(1L, 2L, 3L) && !one.contains(9L, 2L, 3L) && !one.contains(1L, 9L, 3L) && !one.contains(1L, 2L, 9L), "contains confronta tutte e tre le parole");
++		// State e FastState danno la stessa chiave
++		final State s = TestPositions.initial();
++		check(PositionHistory.of(s).equals(PositionHistory.of(new FastState())) && PositionHistory.of(s).contains(s), "add(State) == add(FastState)");
++		final PositionHistory withAll = new PositionHistory();
++		withAll.addAll(two);
++		withAll.addAll(two);
++		check(withAll.size() == 4 && withAll.key0(2) == a.key0, "addAll");
++		System.out.println("(1) PositionHistory: contratto dell'API (add/contains/copy/equals/removeLast/clear/capienza/copyKeysTo/State==FastState)");
++	}
++
++	static int firstMove(FastState s, int[] buf) {
++		final int n = s.generateMoves(buf);
++		check(n > 0, "almeno una mossa legale");
++		return buf[0];
++	}
++
++	// ---- (2) chiave incrementale contro oracolo indipendente ----------------------------------------------------------------------------------------
++	static void incrementalVersusIndependent(long seed) {
++		final Random rnd = new Random(seed);
++		final int[] buf = new int[FastState.MAX_MOVES];
++		final UndoInfo u = new UndoInfo();
++		long pairs = 0, terminals = 0, captures = 0;
++		for (int g = 0; g < 14; g++) {
++			final TestPositions.Game game = TestPositions.playGame(rnd, g % 2 == 0, 90);
++			for (int i = 0; i < game.positions.size(); i += 2) {
++				final State st = game.positions.get(i);
++				final FastState root = FastState.fromState(st);
++				check(sameKey(root, TestPositions.exactKey(st)), "fromState: chiave diversa dall'oracolo indipendente");
++				final int n = root.generateMoves(buf);
++				final int[] moves = java.util.Arrays.copyOf(buf, n);
++				for (int mv : moves) {
++					final int before = root.whiteCount + root.blackCount;
++					root.makeMove(mv, u);
++					pairs++;
++					if (root.whiteCount + root.blackCount < before) {
++						captures++;
++					}
++					if (root.isGameOver()) {
++						terminals++;
++					}
++					final State child = root.toState();
++					check(sameKey(root, TestPositions.exactKey(child)), "chiave incrementale diversa dall'oracolo indipendente dopo una mossa (" + (root.isGameOver() ? "terminale" : "normale") + ")");
++					root.unmakeMove(mv, u);
++					check(sameKey(root, TestPositions.exactKey(st)), "unmake: chiave diversa dall'oracolo");
++				}
++			}
++		}
++		for (int i = 0; i < 300; i++) {
++			final State st = TestPositions.randomPosition(rnd);
++			check(sameKey(FastState.fromState(st), TestPositions.exactKey(st)), "posizione densa: chiave diversa dall'oracolo indipendente");
++		}
++		check(pairs > 5000 && captures > 500 && terminals > 20, "copertura: coppie=" + pairs + " catture=" + captures + " terminali=" + terminals);
++		System.out.println("(2) chiave incrementale == oracolo indipendente su " + pairs + " coppie posizione/mossa (" + captures + " catture, " + terminals + " terminali) e 300 posizioni dense");
++	}
++
++	// ---- (3) la storia costruita come fa il client == quella dell'oracolo ---------------------------------------------------------------------------------
++	static void clientStyleHistories(long seed) {
++		final Random rnd = new Random(seed);
++		long positions = 0, resets = 0;
++		for (int g = 0; g < 25; g++) {
++			final TestPositions.Game game = TestPositions.playGame(rnd, g % 2 == 0, 120);
++			final PositionHistory h = new PositionHistory();
++			int prevPieces = -1;
++			for (int i = 0; i < game.positions.size(); i++) {
++				final FastState f = FastState.fromState(game.positions.get(i));
++				final int pieces = f.whiteCount + f.blackCount + (f.kingSquare >= 0 ? 1 : 0);
++				if (prevPieces >= 0 && pieces < prevPieces) {
++					h.clear(); // una cattura azzera la memoria: come fa TablutNegamaxClient.updateRealGameHistory
++					resets++;
++				}
++				prevPieces = pieces;
++				h.add(f);
++				positions++;
++				check(h.equals(game.histories.get(i)), "storia costruita come il client diversa da quella dell'oracolo (partita " + g + ", posizione " + i + ")");
++				check(h.endsWith(f) && h.contains(f), "la posizione corrente e' l'ultima della storia");
++			}
++		}
++		check(resets > 10, "copertura: poche catture (" + resets + ")");
++		System.out.println("(3) storia costruita come il client == oracolo indipendente su " + positions + " posizioni di 25 partite (" + resets + " azzeramenti per cattura)");
++	}
++
++	// ---- (4) collisioni di hash forzate -------------------------------------------------------------------------------------------------------------------
++	static void forcedCollisions(long seed) {
++		final Random rnd = new Random(seed);
++		long variants = 0;
++		for (int i = 0; i < 200; i++) {
++			final FastState p = FastState.fromState(TestPositions.randomPosition(rnd));
++			final FastState[] vs = MctsTestSupport.collidingVariants(p);
++			for (FastState v : vs) {
++				variants++;
++				check(v.zobristHash == p.zobristHash, "precondizione: stesso hash forzato");
++				check(!(v.key0 == p.key0 && v.key1 == p.key1 && v.key2 == p.key2), "precondizione: chiavi diverse");
++				final PositionHistory h = new PositionHistory();
++				h.add(v);
++				check(!h.contains(p) && h.contains(v), "una posizione con lo stesso hash di p NON e' p");
++				check(!h.endsWith(p), "endsWith non scambia la collisione per la radice");
++				final PositionHistory hp = new PositionHistory();
++				hp.add(p);
++				check(!hp.equals(h), "storie diverse non sono uguali");
++				// una storia a hash le avrebbe confuse
++				final java.util.List<Long> hashHistory = new java.util.ArrayList<>();
++				hashHistory.add(v.zobristHash);
++				check(hashHistory.contains(p.zobristHash), "(documentazione) una storia a hash le confonderebbe");
++			}
++		}
++		System.out.println("(4) " + variants + " collisioni di hash forzate: la storia a chiave esatta non le scambia mai (una a hash si')");
++	}
++
++	// ---- (6) la pila di storia del cammino di Negamax (le voci aggiunte DURANTE la ricerca) confronta tutte e tre le parole ---------------------------------
++	static void negamaxPathStack(long seed) {
++		try {
++			final Method push = Negamax.class.getDeclaredMethod("pushHistory", long.class, long.class, long.class);
++			final Method contains = Negamax.class.getDeclaredMethod("historyContains", long.class, long.class, long.class);
++			push.setAccessible(true);
++			contains.setAccessible(true);
++			final FastState root = new FastState();
++			final Negamax n = new Negamax(new SimpleEvaluator(), 10).setThreads(1);
++			n.installForTest(root, PositionHistory.of(root), 8);
++			check((Boolean) contains.invoke(n, root.key0, root.key1, root.key2), "la radice installata e' nella storia");
++			final Random rnd = new Random(seed);
++			final long[][] pushed = new long[6][3];
++			for (int i = 0; i < pushed.length; i++) {
++				// parole tutte diverse da zero: una pila che non salvasse una parola non ritroverebbe la voce
++				pushed[i][0] = rnd.nextLong() | 1L;
++				pushed[i][1] = rnd.nextLong() | 1L;
++				pushed[i][2] = (rnd.nextLong() & ((1L << 35) - 1)) | 1L;
++				push.invoke(n, pushed[i][0], pushed[i][1], pushed[i][2]);
++			}
++			for (int i = 0; i < pushed.length; i++) {
++				final long a = pushed[i][0], b = pushed[i][1], c = pushed[i][2];
++				check((Boolean) contains.invoke(n, a, b, c), "voce pushata " + i + " ritrovata");
++				check(!(Boolean) contains.invoke(n, a ^ 1L, b, c), "voce " + i + ": differisce solo in k0 -> non e' la stessa");
++				check(!(Boolean) contains.invoke(n, a, b ^ 1L, c), "voce " + i + ": differisce solo in k1 -> non e' la stessa");
++				check(!(Boolean) contains.invoke(n, a, b, c ^ 1L), "voce " + i + ": differisce solo in k2 (celle 64-80/turno) -> non e' la stessa");
++				check(!(Boolean) contains.invoke(n, a, b, c ^ FastState.KEY2_TURN_BIT), "voce " + i + ": differisce solo nel turno -> non e' la stessa");
++			}
++			System.out.println("(6) pila di storia del cammino di Negamax: " + pushed.length + " voci pushate, ritrovate solo con tutte e tre le parole uguali");
++		} catch (Exception e) {
++			check(false, "pila di storia di Negamax (riflessione): " + e);
++		}
++	}
++
++	// ---- (7) la storia del chiamante non viene modificata (ricerca con e senza la radice in coda) ------------------------------------------------------------
++	static void callerHistoryNotModified(long seed) {
++		final Random rnd = new Random(seed);
++		final FastState root = FastState.fromState(TestPositions.randomPosition(rnd));
++		final FastState other = FastState.fromState(TestPositions.randomPosition(rnd));
++		final PositionHistory withoutRoot = PositionHistory.of(other); // NON finisce con la radice: Mcts la aggiunge a una copia
++		final PositionHistory withRoot = PositionHistory.of(other, root);
++		final PositionHistory a0 = withoutRoot.copy(), b0 = withRoot.copy();
++		final Mcts m = MctsSearchCheck.mk(MctsSearchCheck.constant(0), "expand=0,mm=0,cache=0", 1);
++		m.setMaxSims(30);
++		m.findBestMove(root, 100000, withoutRoot);
++		m.findBestMove(root, 100000, withRoot);
++		check(withoutRoot.equals(a0) && withoutRoot.size() == 1, "Mcts: la storia del chiamante senza la radice NON deve essere modificata (la radice si aggiunge a una copia)");
++		check(withRoot.equals(b0), "Mcts: la storia del chiamante con la radice non e' modificata");
++		final Negamax n = new Negamax(new SimpleEvaluator(), 3, true, 1 << 12, true, Negamax.ORDER_DEFAULT, 1);
++		n.findBestMove(root, 1_000_000_000L, withoutRoot);
++		n.findBestMove(root, 1_000_000_000L, withRoot);
++		check(withoutRoot.equals(a0) && withRoot.equals(b0), "Negamax: la storia del chiamante non e' modificata");
++		final Negamax smp = new Negamax(new SimpleEvaluator(), 40, true, 1 << 12, true, Negamax.ORDER_DEFAULT, 3).setThreads(3);
++		smp.findBestMove(root, 150, withRoot);
++		check(withRoot.equals(b0), "Negamax Lazy SMP: la storia del chiamante non e' modificata dagli helper");
++		System.out.println("(7) la storia passata dal chiamante resta invariata (Mcts con e senza la radice in coda, Negamax, Negamax Lazy SMP)");
++	}
++
++	// ---- (8) il riuso dell'albero MCTS rispetta la storia ---------------------------------------------------------------------------------------------------------
++	static void mctsTreeReuseRespectsHistory(long seed) {
++		final Random rnd = new Random(seed);
++		final FastState root = FastState.fromState(TestPositions.randomPosition(rnd));
++		final FastState earlier = FastState.fromState(TestPositions.randomPosition(rnd));
++		final PositionHistory h1 = PositionHistory.of(root);
++		final PositionHistory h2 = PositionHistory.of(earlier, root); // stessa posizione, storia DIVERSA
++		final Mcts m = MctsSearchCheck.mk(MctsSearchCheck.constant(0), "expand=0,mm=0,cache=0,reuse=true", 1);
++		m.setMaxSims(40);
++		m.findBestMove(root, 100000, h1);
++		check(!m.lastReused, "prima ricerca: nessun albero da riusare");
++		m.findBestMove(root, 100000, h1.copy());
++		check(m.lastReused, "stessa posizione e stessa storia: l'albero si riusa");
++		m.findBestMove(root, 100000, h2);
++		check(!m.lastReused, "stessa posizione ma storia DIVERSA: l'albero NON si riusa (le ripetizioni dipendono dalla storia)");
++		System.out.println("(8) riuso dell'albero MCTS: si riusa solo con stessa posizione E stessa storia");
++	}
++
++	// ---- (5) nessuna API di ricerca/tracciamento accetta storie a hash ------------------------------------------------------------------------------
++	static void noHashHistoryInApis() {
++		final Class<?>[] classes = { MoveSearcher.class, NegamaxSearcher.class, Negamax.class, Mcts.class, LegacyNegamax.class,
++			it.unibo.ai.didattica.competition.tablut.training.GameTracker.class };
++		int inspected = 0;
++		for (Class<?> c : classes) {
++			for (Method m : c.getDeclaredMethods()) {
++				for (Class<?> t : m.getParameterTypes()) {
++					check(!(t == java.util.List.class && m.getName().startsWith("findBestMove")), c.getSimpleName() + "." + m.getName() + " accetta ancora una List come storia");
++				}
++				if (m.getName().startsWith("findBestMove") || m.getName().equals("history")) {
++					inspected++;
++					final Class<?>[] pt = m.getParameterTypes();
++					for (int i = 0; i + 1 < pt.length; i++) {
++						check(!(pt[i] == long[].class && pt[i + 1] == int.class), c.getSimpleName() + "." + m.getName() + " accetta ancora (long[] hash, int len) come storia");
++					}
++					if (m.getName().equals("history")) {
++						check(m.getReturnType() == PositionHistory.class, c.getSimpleName() + ".history() deve restituire PositionHistory, non " + m.getReturnType().getSimpleName());
++					}
++				}
++			}
++		}
++		check(inspected >= 8, "copertura: troppo pochi metodi ispezionati (" + inspected + ")");
++		System.out.println("(5) per riflessione: nessuno dei " + inspected + " metodi findBestMove/history ispezionati usa piu' storie a hash (List<Long> o long[] + lunghezza)");
++	}
++}
+--- /dev/null
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/client/ClientHistoryIntegrationCheck.java
+@@ -0,0 +1,173 @@
++package it.unibo.ai.didattica.competition.tablut.client;
++
++import java.io.DataInputStream;
++import java.io.DataOutputStream;
++import java.net.ServerSocket;
++import java.net.Socket;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Random;
++import java.util.concurrent.atomic.AtomicReference;
++
++import com.google.gson.Gson;
++
++import it.unibo.ai.didattica.competition.tablut.aiplayer.MoveSearcher;
++import it.unibo.ai.didattica.competition.tablut.domain.State;
++import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
++import it.unibo.ai.didattica.competition.tablut.engine.FastState;
++import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
++import it.unibo.ai.didattica.competition.tablut.selftest.TestPositions;
++import it.unibo.ai.didattica.competition.tablut.util.Configuration;
++import it.unibo.ai.didattica.competition.tablut.util.StreamUtils;
++
++/**
++ * Integrazione del CLIENT REALE ({@link TablutNegamaxClient}, ruolo Bianco) con la storia a chiavi esatte: un finto server su localhost
++ * (porta {@link Configuration#whitePort}, che deve essere libera) invia al client, con il protocollo vero (stringhe JSON di {@code State}), le
++ * posizioni NON terminali di una partita casuale con catture, comprese quelle dopo la mossa dell'avversario. Il client gira nel suo ciclo
++ * {@code run()} con un {@link MoveSearcher} che registra una copia della storia che riceve a ogni suo turno e risponde con una mossa legale.
++ * Si verifica che, a ogni turno del client, la storia ricevuta dal motore coincida con quella dell'oracolo indipendente
++ * ({@link TestPositions#exactKey(State)}): le posizioni dall'ultima cattura, quella corrente inclusa, con l'azzeramento a ogni cattura.
++ * Il test termina con {@code System.exit}: non chiude mai il socket prima (altrimenti il client terminerebbe la JVM).
++ */
++public class ClientHistoryIntegrationCheck {
++
++	static int failures = 0;
++
++	static void check(boolean ok, String what) {
++		if (!ok) {
++			failures++;
++			System.out.println("FALLITO: " + what);
++		}
++	}
++
++	/** Searcher finto: registra la storia ricevuta e gioca la prima mossa legale. */
++	static final class Recorder implements MoveSearcher {
++		final List<PositionHistory> seen = new ArrayList<>();
++		final List<long[]> roots = new ArrayList<>();
++
++		@Override
++		public int findBestMove(FastState root, long timeBudgetMillis, PositionHistory history) {
++			seen.add(history.copy()); // copia: il client continua a modificare la sua storia
++			roots.add(new long[] { root.key0, root.key1, root.key2 });
++			final int[] buf = new int[FastState.MAX_MOVES];
++			root.generateMoves(buf);
++			return buf[0];
++		}
++
++		@Override
++		public String name() {
++			return "recorder";
++		}
++
++		@Override
++		public String describeLastSearch() {
++			return "recorder";
++		}
++
++		@Override
++		public long lastWork() {
++			return 0;
++		}
++
++		@Override
++		public double lastDepth() {
++			return 0;
++		}
++
++		@Override
++		public void shutdown() {
++		}
++	}
++
++	public static void main(String[] args) throws Exception {
++		// una partita con abbastanza catture da esercitare l'azzeramento della storia
++		TestPositions.Game game = null;
++		int captures = 0;
++		for (long seed = 1; seed < 200 && game == null; seed++) {
++			final TestPositions.Game g = TestPositions.playGame(new Random(seed), true, 100);
++			int caps = 0;
++			for (int i = 1; i < g.histories.size(); i++) {
++				if (g.histories.get(i).size() == 1) {
++					caps++;
++				}
++			}
++			if (g.positions.size() >= 30 && caps >= 3) {
++				game = g;
++				captures = caps;
++			}
++		}
++		check(game != null, "non trovata una partita di prova con abbastanza catture");
++		final List<State> positions = game.positions;
++
++		final ServerSocket ss = new ServerSocket(Configuration.whitePort);
++		final AtomicReference<Throwable> serverError = new AtomicReference<>();
++		final List<Integer> clientTurns = new ArrayList<>();
++		final Thread server = new Thread(new Runnable() {
++			@Override
++			public void run() {
++				try {
++					final Socket s = ss.accept();
++					final DataInputStream in = new DataInputStream(s.getInputStream());
++					final DataOutputStream out = new DataOutputStream(s.getOutputStream());
++					final String name = StreamUtils.readString(in); // il client dichiara il nome
++					check(name != null && name.contains("histtest"), "il client dichiara il nome");
++					final Gson gson = new Gson();
++					for (int i = 0; i < positions.size(); i++) {
++						final State st = positions.get(i);
++						StreamUtils.writeString(out, gson.toJson(st));
++						if (st.getTurn() == Turn.WHITE) { // tocca al client: risponde con la sua mossa
++							clientTurns.add(i);
++							final String action = StreamUtils.readString(in);
++							check(action != null && !action.isEmpty(), "il client risponde con una mossa");
++						}
++					}
++				} catch (Throwable t) {
++					serverError.set(t);
++				}
++			}
++		});
++		server.setDaemon(true);
++		server.start();
++
++		final Recorder rec = new Recorder();
++		final TablutNegamaxClient client = new TablutNegamaxClient("white", "histtest", 60, "localhost", rec);
++		final Thread clientThread = new Thread(new Runnable() {
++			@Override
++			public void run() {
++				client.run();
++			}
++		});
++		clientThread.setDaemon(true);
++		clientThread.start();
++
++		server.join(120_000);
++		check(!server.isAlive(), "il finto server non ha terminato entro 120 s (il client e' bloccato?)");
++		check(serverError.get() == null, "errore nel finto server: " + serverError.get());
++		// il client ha gia' risposto all'ultimo turno suo quando il server ha finito: attendo solo che la registrazione sia completa
++		for (int i = 0; i < 100 && rec.seen.size() < clientTurns.size(); i++) {
++			Thread.sleep(50);
++		}
++
++		check(rec.seen.size() == clientTurns.size() && !clientTurns.isEmpty(), "il client ha cercato a ogni suo turno: " + rec.seen.size() + " ricerche per " + clientTurns.size() + " turni");
++		int compared = 0;
++		for (int k = 0; k < Math.min(rec.seen.size(), clientTurns.size()); k++) {
++			final int i = clientTurns.get(k);
++			final PositionHistory expected = game.histories.get(i);
++			check(rec.seen.get(k).equals(expected), "turno " + k + " (posizione " + i + "): la storia ricevuta dal motore e' diversa da quella dell'oracolo indipendente ("
++				+ rec.seen.get(k).size() + " vs " + expected.size() + " posizioni)");
++			final long[] root = TestPositions.exactKey(positions.get(i));
++			check(rec.roots.get(k)[0] == root[0] && rec.roots.get(k)[1] == root[1] && rec.roots.get(k)[2] == root[2], "turno " + k + ": la radice non e' la posizione inviata dal server");
++			check(rec.seen.get(k).size() >= 1 && rec.seen.get(k).endsWith(FastState.fromState(positions.get(i))), "turno " + k + ": la radice e' l'ultima voce della storia");
++			compared++;
++		}
++		int resets = 0;
++		for (int k = 0; k < clientTurns.size(); k++) {
++			if (game.histories.get(clientTurns.get(k)).size() == 1 && clientTurns.get(k) > 0) {
++				resets++;
++			}
++		}
++		System.out.println("posizioni inviate: " + positions.size() + " (" + captures + " catture nella partita); turni del client confrontati: " + compared + ", di cui " + resets + " subito dopo un azzeramento");
++		System.out.println(failures == 0 ? "=== CLIENT HISTORY INTEGRATION CHECK OK ===" : "=== FALLITI: " + failures + " ===");
++		System.exit(failures == 0 ? 0 : 1); // NON si chiude il socket: il client terminerebbe la JVM con exit(1)
++	}
++}
+--- /dev/null
++++ b/Tablut/src/it/unibo/ai/didattica/competition/tablut/engine/PositionHistory.java
+@@ -0,0 +1,207 @@
++package it.unibo.ai.didattica.competition.tablut.engine;
++
++import java.util.Arrays;
++
++import it.unibo.ai.didattica.competition.tablut.domain.State;
++
++/**
++ * Storia di posizioni rappresentata con la CHIAVE ESATTA di {@link FastState} ({@code key0, key1, key2}: la scacchiera e il turno,
++ * 163 bit), non con l'hash Zobrist: due posizioni diverse hanno sempre chiavi diverse, quindi non possono mai essere scambiate per la
++ * stessa (nemmeno per un falso rilevamento di ripetizione). Ogni posizione occupa {@value #LONGS_PER_POSITION} {@code long}, senza oggetti
++ * per posizione. Ordine: la piu' vecchia per prima. Nel significato usato dalla ricerca: le posizioni REALMENTE occorse in partita
++ * dall'ultima cattura, radice inclusa.
++ * <p>
++ * Non e' thread-safe: una ricerca ne usa una copia propria (i metodi {@code findBestMove} non la modificano e non la conservano).
++ * Una chiave vale solo se lo stato che la fornisce ha la chiave aggiornata (si veda {@link FastState#key0}); per uno {@link State}
++ * del dominio la conversione passa da {@link FastState#fromState(State)}, che la calcola.
++ */
++public final class PositionHistory {
++
++	/** Quanti {@code long} occupa una posizione. */
++	public static final int LONGS_PER_POSITION = 3;
++
++	private long[] keys;
++	private int size;
++
++	public PositionHistory() {
++		this(16);
++	}
++
++	/** @param capacity numero di posizioni per cui riservare spazio (cresce da solo) */
++	public PositionHistory(int capacity) {
++		this.keys = new long[LONGS_PER_POSITION * Math.max(1, capacity)];
++	}
++
++	/** Copia indipendente di {@code other}. */
++	public PositionHistory(PositionHistory other) {
++		this.keys = Arrays.copyOf(other.keys, Math.max(LONGS_PER_POSITION, LONGS_PER_POSITION * other.size));
++		this.size = other.size;
++	}
++
++	/** Una storia vuota (nuova a ogni chiamata: non e' un singleton, perche' e' modificabile). */
++	public static PositionHistory empty() {
++		return new PositionHistory();
++	}
++
++	/** Storia con le posizioni date, la piu' vecchia per prima. */
++	public static PositionHistory of(FastState... states) {
++		final PositionHistory h = new PositionHistory(states.length);
++		for (FastState s : states) {
++			h.add(s);
++		}
++		return h;
++	}
++
++	/** Storia con gli stati del dominio dati, il piu' vecchio per primo. */
++	public static PositionHistory of(State... states) {
++		final PositionHistory h = new PositionHistory(states.length);
++		for (State s : states) {
++			h.add(s);
++		}
++		return h;
++	}
++
++	public int size() {
++		return size;
++	}
++
++	public boolean isEmpty() {
++		return size == 0;
++	}
++
++	public void clear() {
++		size = 0;
++	}
++
++	/** Accoda la posizione di {@code s} (la sua chiave esatta corrente). */
++	public void add(FastState s) {
++		add(s.key0, s.key1, s.key2);
++	}
++
++	/** Accoda la posizione di uno {@link State} del dominio (lo converte in {@link FastState}: O(81)). */
++	public void add(State s) {
++		add(FastState.fromState(s));
++	}
++
++	public void add(long k0, long k1, long k2) {
++		if (LONGS_PER_POSITION * (size + 1) > keys.length) {
++			keys = Arrays.copyOf(keys, Math.max(LONGS_PER_POSITION * (size + 1), keys.length * 2));
++		}
++		final int o = LONGS_PER_POSITION * size++;
++		keys[o] = k0;
++		keys[o + 1] = k1;
++		keys[o + 2] = k2;
++	}
++
++	/** Accoda tutte le posizioni di {@code other}. */
++	public void addAll(PositionHistory other) {
++		for (int i = 0; i < other.size; i++) {
++			add(other.key0(i), other.key1(i), other.key2(i));
++		}
++	}
++
++	/** Toglie l'ultima posizione. */
++	public void removeLast() {
++		if (size == 0) {
++			throw new IllegalStateException("storia vuota");
++		}
++		size--;
++	}
++
++	public long key0(int i) {
++		return keys[LONGS_PER_POSITION * checkIndex(i)];
++	}
++
++	public long key1(int i) {
++		return keys[LONGS_PER_POSITION * checkIndex(i) + 1];
++	}
++
++	public long key2(int i) {
++		return keys[LONGS_PER_POSITION * checkIndex(i) + 2];
++	}
++
++	private int checkIndex(int i) {
++		if (i < 0 || i >= size) {
++			throw new IndexOutOfBoundsException("indice " + i + ", dimensione " + size);
++		}
++		return i;
++	}
++
++	/** Vero se la storia contiene ESATTAMENTE la posizione di {@code s} (stessa scacchiera e stesso turno). */
++	public boolean contains(FastState s) {
++		return contains(s.key0, s.key1, s.key2);
++	}
++
++	public boolean contains(State s) {
++		return contains(FastState.fromState(s));
++	}
++
++	public boolean contains(long k0, long k1, long k2) {
++		final long[] a = keys;
++		for (int i = 0, o = 0; i < size; i++, o += LONGS_PER_POSITION) {
++			if (a[o] == k0 && a[o + 1] == k1 && a[o + 2] == k2) {
++				return true;
++			}
++		}
++		return false;
++	}
++
++	/** Vero se l'ultima posizione e' quella di {@code s}. */
++	public boolean endsWith(FastState s) {
++		if (size == 0) {
++			return false;
++		}
++		final int o = LONGS_PER_POSITION * (size - 1);
++		return keys[o] == s.key0 && keys[o + 1] == s.key1 && keys[o + 2] == s.key2;
++	}
++
++	/**
++	 * Copia le chiavi in {@code dst} a partire dalla posizione {@code dstPosition} (in posizioni, non in {@code long}), nello stesso
++	 * formato interno: {@value #LONGS_PER_POSITION} {@code long} per posizione. {@code dst} deve essere abbastanza grande.
++	 *
++	 * @return il numero di posizioni copiate
++	 */
++	public int copyKeysTo(long[] dst, int dstPosition) {
++		System.arraycopy(keys, 0, dst, LONGS_PER_POSITION * dstPosition, LONGS_PER_POSITION * size);
++		return size;
++	}
++
++	/** Copia indipendente. */
++	public PositionHistory copy() {
++		return new PositionHistory(this);
++	}
++
++	@Override
++	public boolean equals(Object o) {
++		if (this == o) {
++			return true;
++		}
++		if (!(o instanceof PositionHistory)) {
++			return false;
++		}
++		final PositionHistory p = (PositionHistory) o;
++		if (p.size != size) {
++			return false;
++		}
++		for (int i = 0; i < LONGS_PER_POSITION * size; i++) {
++			if (keys[i] != p.keys[i]) {
++				return false;
++			}
++		}
++		return true;
++	}
++
++	@Override
++	public int hashCode() {
++		int h = size;
++		for (int i = 0; i < LONGS_PER_POSITION * size; i++) {
++			h = 31 * h + Long.hashCode(keys[i]);
++		}
++		return h;
++	}
++
++	@Override
++	public String toString() {
++		return "PositionHistory[" + size + " posizioni]";
++	}
++}

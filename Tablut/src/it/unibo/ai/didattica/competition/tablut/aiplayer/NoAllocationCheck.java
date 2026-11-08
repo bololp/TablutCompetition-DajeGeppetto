@@ -49,9 +49,10 @@ public class NoAllocationCheck {
 			fast[i] = FastState.fromState(states[i]);
 		}
 
-		Evaluator[] evs = { new SimpleEvaluator(), NeuralEvaluator.randomInit(3), CnnEvaluator.randomInit(CnnEvaluator.defaultConfig(TablutFeatures.G_DEFAULT), TablutFeatures.G_DEFAULT, 5) };
-		String[] names = { "Simple", "Rete MLP", "Rete CNN" };
-		int[] depths = { 5, 4, 3 };
+		Evaluator[] evs = { new SimpleEvaluator(), NeuralEvaluator.randomInit(3), CnnEvaluator.randomInit(CnnEvaluator.defaultConfig(TablutFeatures.G_DEFAULT), TablutFeatures.G_DEFAULT, 5),
+				new NnueEvaluator(NnueNetwork.random(64, 16, 7)) };
+		String[] names = { "Simple", "Rete MLP", "Rete CNN", "Rete NNUE" };
+		int[] depths = { 5, 4, 3, 5 };
 		int failures = 0;
 		for (int e = 0; e < evs.length; e++) {
 			// scaldamento su un'altra istanza: JIT e ThreadLocal degli evaluator. La misura usa un'istanza NUOVA (TT vuota: altrimenti
