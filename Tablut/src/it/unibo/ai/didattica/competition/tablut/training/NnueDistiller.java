@@ -205,6 +205,36 @@ public final class NnueDistiller {
 			return p.length;
 		}
 
+		/**
+		 * La rete in virgola mobile equivalente a una quantizzata (per ripartire da pesi esistenti): ogni valore e' {@code q / scala} con scale potenze
+		 * di due, quindi {@link NnueDistiller#quantize} di questa rete restituisce ESATTAMENTE {@code q}.
+		 */
+		public static FloatNet fromQuantized(NnueNetwork q) {
+			final FloatNet f = new FloatNet(q.hidden(), q.l2());
+			final int H = q.hidden(), L = q.l2();
+			final short[] ftW = q.ftWeights(), ftB = q.ftBiases();
+			for (int i = 0; i < ftW.length; i++) {
+				f.p[i] = (double) ftW[i] / NnueNetwork.QA;
+			}
+			for (int j = 0; j < H; j++) {
+				f.p[f.oFtB + j] = (double) ftB[j] / NnueNetwork.QA;
+			}
+			final double sb = (double) NnueNetwork.QA * NnueNetwork.QW;
+			for (int r = 0; r < NnueNetwork.ROLES; r++) {
+				final short[] w1 = q.l1Weights(r), w2 = q.l2Weights(r);
+				final int[] b1 = q.l1Biases(r);
+				for (int i = 0; i < L * H; i++) {
+					f.p[f.offL1W(r) + i] = (double) w1[i] / NnueNetwork.QW;
+				}
+				for (int i = 0; i < L; i++) {
+					f.p[f.offL1B(r) + i] = b1[i] / sb;
+					f.p[f.offL2W(r) + i] = (double) w2[i] / NnueNetwork.QW;
+				}
+				f.p[f.offL2B(r)] = q.l2Bias(r) / sb;
+			}
+			return f;
+		}
+
 		int offL1W(int r) {
 			return oRole + r * roleSize;
 		}
@@ -264,12 +294,20 @@ public final class NnueDistiller {
 
 	/** Passata avanti: restituisce il logit {@code z} (il valore e' {@code tanh(z)}). */
 	public static double forward(FloatNet n, byte[] boards, int off, int role, Ws ws) {
+		return forward(n, boards, off, role, null, ws);
+	}
+
+	/**
+	 * Come {@link #forward(FloatNet, byte[], int, int, Ws)} sulla posizione TRASFORMATA da una simmetria: {@code map[sq]} e' la cella in cui finisce
+	 * la cella {@code sq} ({@code BoardSymmetry.MAP[s]}); {@code null} = identita'. Permutare gli indici delle feature evita di copiare la posizione.
+	 */
+	public static double forward(FloatNet n, byte[] boards, int off, int role, int[] map, Ws ws) {
 		final int H = n.hidden, L = n.l2;
 		ws.nAct = 0;
 		for (int sq = 0; sq < 81; sq++) {
 			final int piece = boards[off + sq];
 			if (piece != BoardConstants.EMPTY) {
-				ws.act[ws.nAct++] = NnueNetwork.featureIndex(piece, sq);
+				ws.act[ws.nAct++] = NnueNetwork.featureIndex(piece, map == null ? sq : map[sq]);
 			}
 		}
 		final double[] p = n.p;
