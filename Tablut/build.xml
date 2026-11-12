@@ -81,6 +81,16 @@
             <zipfileset excludes="META-INF/*.SF" src="lib/gson-2.2.2.jar"/>
             <zipfileset excludes="META-INF/*.SF" src="lib/commons-cli-1.4.jar"/>
         </jar>
+    </target><target name="negamax-jar">
+        <jar destfile="negamax.jar" filesetmanifest="mergewithoutmain">
+            <manifest>
+                <attribute name="Main-Class" value="it.unibo.ai.didattica.competition.tablut.client.TablutNegamaxClient"/>
+                <attribute name="Class-Path" value="."/>
+            </manifest>
+            <fileset dir="build"/>
+            <zipfileset excludes="META-INF/*.SF" src="lib/gson-2.2.2.jar"/>
+            <zipfileset excludes="META-INF/*.SF" src="lib/commons-cli-1.4.jar"/>
+        </jar>
     </target>
 
     <target name="humanwhite">
