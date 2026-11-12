@@ -5,14 +5,11 @@ EvaluatorLoader / CachingEvaluator / TablutNegamaxClient, ricompila in una carte
 nel classpath, lancia il test che deve accorgersene e si aspetta che FALLISCA. Un mutante che il test non rileva e' un buco del test.
 Stesso metodo di tools/mutation_cnn.py.
 
-Uso (dalla cartella Tablut):  python3 tools/mutation_nnue.py [unit|search|client|training|data|selfplay|trainer|all] [indiceIniziale indiceFinale]
+Uso (dalla cartella Tablut):  python3 tools/mutation_nnue.py [unit|search|client|training|all] [indiceIniziale indiceFinale]
   unit   -> NnueCheck        (rete, evaluator, sessione, file dei pesi)
   search -> NnueSearchCheck  (integrazione con Negamax; ~25 s per mutante)
   client -> NnueClientCheck  (selezione del backend eval=)
   training -> NnueTrainingCheck (distillatore: gradiente, quantizzazione, dati, determinismo)
-  data     -> NnueDataCheck     (formato dati, importatori dei log veri / dati.gz / DistillSet, NnueDataTool)
-  selfplay -> NnueSelfPlayCheck (auto-gioco, rietichettatura, CLI dei dati)
-  trainer  -> NnueTrainerCheck  (addestramento da dati di gioco)
 Variabili d'ambiente: BUILD = cartella delle classi gia' compilate (default 'build').
 """
 import os, shutil, subprocess, sys
@@ -21,15 +18,12 @@ ROOT = "src/it/unibo/ai/didattica/competition/tablut/"
 BUILD = os.environ.get("BUILD", "build")
 CP = f"{BUILD}:lib/gson-2.2.2.jar:lib/commons-cli-1.4.jar"
 T = "it.unibo.ai.didattica.competition.tablut."
-CHECKS = {"unit": T + "aiplayer.NnueCheck", "search": T + "aiplayer.NnueSearchCheck", "client": T + "client.NnueClientCheck", "training": T + "training.NnueTrainingCheck", "data": T + "training.NnueDataCheck",
-          "selfplay": T + "training.NnueSelfPlayCheck", "trainer": T + "training.NnueTrainerCheck"}
-TIMEOUT = {"unit": 240, "search": 420, "client": 300, "training": 300, "data": 300, "selfplay": 300, "trainer": 300}
+CHECKS = {"unit": T + "aiplayer.NnueCheck", "search": T + "aiplayer.NnueSearchCheck", "client": T + "client.NnueClientCheck", "training": T + "training.NnueTrainingCheck"}
+TIMEOUT = {"unit": 240, "search": 420, "client": 300, "training": 300}
 
 NET, SES, EVA = "aiplayer/NnueNetwork.java", "aiplayer/NnueSession.java", "aiplayer/NnueEvaluator.java"
 NEG, LOAD, CACHE, CLI = "aiplayer/Negamax.java", "aiplayer/EvaluatorLoader.java", "aiplayer/CachingEvaluator.java", "client/TablutNegamaxClient.java"
 TRN = "training/NnueDistiller.java"
-NDS, NDI, NSP, NRL, NTR, NDT = ("training/NnueDataset.java", "training/NnueDataImport.java", "training/NnueSelfPlay.java", "training/NnueRelabel.java",
-                                "training/NnueTrainer.java", "training/NnueDataTool.java")
 
 M = {"unit": [  # (descrizione, file, vecchio, nuovo)
     # ---- NnueNetwork: feature e aritmetica
@@ -137,77 +131,6 @@ M = {"unit": [  # (descrizione, file, vecchio, nuovo)
     ("addestramento: seme dell'inizializzazione ignorato", TRN, "final Random rnd = new Random(cfg.seed);\n\t\tfinal FloatNet net", "final Random rnd = new Random(1234);\n\t\tfinal FloatNet net"),
     ("ottimizzatore: passo con segno sbagliato (la perdita non cala)", TRN, "w[i] -= lr * (m[i] / c1) / (Math.sqrt(v[i] / c2) + 1e-8);", "w[i] += lr * (m[i] / c1) / (Math.sqrt(v[i] / c2) + 1e-8);"),
     ("ottimizzatore: gradiente non azzerato fra un batch e il successivo", TRN, "\t\t\t\tjava.util.Arrays.fill(g, 0.0);\n\t\t\t\tfor (int k = b; k < end; k++) {", "\t\t\t\tfor (int k = b; k < end; k++) {"),
-], "data": [
-    # ---- NnueDataset: invarianti, I/O, unione, split
-    ("posizione: Re sul bordo accettato", NDS, "if (r == 0 || r == 8 || c == 0 || c == 8) {", "if (false) {"),
-    ("posizione: Re assente accettato", NDS, "if (kings == 0) {", "if (false) {"),
-    ("posizione: due Re accettati", NDS, "if (kings > 1) {", "if (false) {"),
-    ("posizione: troppe pedine accettate", NDS, "if (white > MAX_WHITE || black > MAX_BLACK) {", "if (false) {"),
-    ("posizione: pedina bianca sul trono accettata", NDS, "return \"pedina bianca sul trono\";", "break;"),
-    ("posizione: codice sconosciuto (il 3 dei dati legacy) accettato", NDS, "return \"codice pedina \" + p + \" nella cella \" + sq + \" (ammessi 0, 1, 2, 4: il Re e' 4)\";", "break;"),
-    ("campione: ruolo non verificato", NDS, "if (role != 0 && role != 1) {", "if (false) {"),
-    ("campione: esito non canonico con outValid = 0 accettato", NDS, "if (outValid == 0 && outcome != 0) {", "if (false) {"),
-    ("campione: valore > 1 accettato", NDS, "if (Float.isNaN(value) || value < -1f || value > 1f) {", "if (Float.isNaN(value) || value < -1f) {"),
-    ("campione: valore non canonico con valValid = 0 accettato", NDS, "if (valValid == 0 && value != 0f) {", "if (false) {"),
-    ("campione: toEnd senza esito valido accettato", NDS, "if (toEnd >= 0 && outValid == 0) {", "if (false) {"),
-    ("Builder: valore non riportato a 0 quando non valido", NDS, "this.value[n] = valValid ? (float) value : 0f;", "this.value[n] = (float) value;"),
-    ("unione: chiavi uguali di file diversi fuse", NDS, "final long key = ((long) part << 32) | (d.game[i] & 0xFFFFFFFFL);", "final long key = (d.game[i] & 0xFFFFFFFFL);"),
-    ("subset: ruolo preso dall'indice sbagliato", NDS, "r[k] = role[i];", "r[k] = role[k];"),
-    ("split: off-by-one nella percentuale", NDS, "return Math.floorMod(h, 100L) < pct;", "return Math.floorMod(h, 100L) <= pct;"),
-    ("split: per campione invece che per partita", NDS, "if (isHeldOut(game[i], salt, pct)) {", "if (isHeldOut(i, salt, pct)) {"),
-    ("salvataggio: esito e outValid scambiati", NDS, "\t\t\to.write(outcome);\n\t\t\to.write(outValid);", "\t\t\to.write(outValid);\n\t\t\to.write(outcome);"),
-    ("caricamento: byte in piu' non rilevati (niente verifica del CRC)", NDS, "if (in.read() != -1) { // leggere fino alla fine fa verificare il CRC di gzip", "if (false) {"),
-    ("caricamento: versione del formato non verificata", NDS, "if (!magic.equals(MAGIC)) {", "if (false) {"),
-    ("caricamento: dimensione non limitata", NDS, "if (n < 0 || n > MAX_SAMPLES) {", "if (n < 0) {"),
-    # ---- NnueDataImport
-    ("coordinate: riga e colonna scambiate", NDI, "final int c = Character.toLowerCase(s.charAt(0)) - 'a', r = s.charAt(1) - '1';", "final int r = Character.toLowerCase(s.charAt(0)) - 'a', c = s.charAt(1) - '1';"),
-    ("Re catturato: la cella del Re del server non e' controllata", NDI, "if (kings != 1 || at != kingBefore) {", "if (kings != 1) {"),
-    ("Re catturato: server che toglie il Re non gestito", NDI, "return Arrays.equals(engine, b); // un server che toglie il Re dalla scacchiera: stessa rappresentazione del motore", "return false;"),
-    ("mossa illegale applicata dal server scambiata per forfeit", NDI, "end = Arrays.equals(p.boards.get(k), p.boards.get(k - 1)) ? \"ILLEGAL\" : \"DIVERGENCE\";", "end = \"ILLEGAL\";"),
-    ("vittoria su scacchiera non terminale accettata come esito", NDI, "} else if (last.equals(\"WW\") || last.equals(\"BW\")) {", "} else if (false) {"),
-    ("patta del server ignorata", NDI, "} else if (tracker.isRepetitionDraw() || last.equals(\"D\")) {", "} else if (tracker.isRepetitionDraw()) {"),
-    ("token D scambiato per divergenza", NDI, "(token.equals(\"D\") && (t == Turn.DRAW || t == Turn.WHITE || t == Turn.BLACK))", "(token.equals(\"D\") && t == Turn.DRAW)"),
-    ("toEnd sbagliato di uno", NDI, "r.outValid ? r.applied - i : -1", "r.outValid ? r.applied - i - 1 : -1"),
-    ("doppioni non scartati", NDI, "if (dedupe && !seen.add(moveKey(p))) {", "if (false) {"),
-    ("posizioni senza etichetta tenute", NDI, "if (!r.outValid && !keepUnlabeled) {", "if (false) {"),
-    ("mosse rifiutate non contate", NDI, "\t\t\t\tif (pendingSet) {\n\t\t\t\t\tp.rejectedMoves++;\n\t\t\t\t}\n", ""),
-    ("Re dei dati legacy non convertito (3 -> 4)", NDI, "return code == 3 ? BoardConstants.KING : code;", "return code;"),
-    ("DistillSet: outValid ignorato", NDI, "final boolean valid = outValid == null || outValid[i] == 1;", "final boolean valid = true;"),
-    ("DistillSet: sorgente non mappata", NDI, "source != null && source[i] == 1 ? NnueDataset.SRC_SELFPLAY : NnueDataset.SRC_IMPORT", "NnueDataset.SRC_IMPORT"),
-    # ---- NnueDataTool
-    ("filter: l'esito richiesto non e' controllato", NDT, "(!needOutcome || d.outValid[i] == 1)", "true"),
-    ("split: percentuale oltre 100 accettata", NDT, "if (train == null || held == null || pct < 0 || pct > 100) {", "if (train == null || held == null || pct < 0) {"),
-], "selfplay": [
-    ("scoreToValue: segno non invertito per il Nero", NSP, "final double white = whiteToMove ? moverScore : -moverScore;", "final double white = moverScore;"),
-    ("scoreToValue: soglia delle vittorie forzate sbagliata", NSP, "if (white >= PROVEN_SCORE) {", "if (white >= 2 * PROVEN_SCORE) {"),
-    ("scoreToValue: valore non limitato a [-1,1]", NSP, "return Math.max(-1.0, Math.min(1.0, white / scale));", "return white / scale;"),
-    ("auto-gioco: l'esplorazione eps non gioca mosse casuali", NSP, "if (chosen == null || rnd.nextDouble() < cfg.eps) {", "if (chosen == null) {"),
-    ("auto-gioco: nessuna apertura casuale", NSP, "if (ply < cfg.openRandom) {", "if (ply < 0) {"),
-    ("auto-gioco: esito valido anche per partite troncate", NSP, "g.outValid = !GameTracker.LABEL_MAXPLIES.equals(g.result.label);", "g.outValid = true;"),
-    ("dataset: toEnd sbagliato di uno", NSP, "g.applied - ply,", "g.applied - ply - 1,"),
-    ("dataset: tutte le partite con la stessa chiave", NSP, "g.values.get(k), true, i, ply,", "g.values.get(k), true, 0, ply,"),
-    ("generate: tutte le partite con lo stesso seme", NSP, "final long gs = master.nextLong();", "final long gs = cfg.seed;"),
-    ("rietichettatura: lato al tratto invertito", NRL, "d.role[i] == 0, scale);", "d.role[i] == 1, scale);"),
-    ("rietichettatura: onlyMissing ignorato", NRL, "if (onlyMissing && d.valValid[i] == 1) {", "if (false) {"),
-], "trainer": [
-    ("bersaglio: lambda scambiato fra valore ed esito", NTR, "return cfg.lambda * d.value[i] + (1.0 - cfg.lambda) * o;", "return (1.0 - cfg.lambda) * d.value[i] + cfg.lambda * o;"),
-    ("bersaglio: sconto costante invece che per distanza dalla fine", NTR, "o *= Math.pow(cfg.gamma, d.toEnd[i]);", "o *= cfg.gamma;"),
-    ("bersaglio: sconto applicato anche con distanza ignota", NTR, "if (cfg.gamma < 1.0 && d.toEnd[i] >= 0) {", "if (cfg.gamma < 1.0) {"),
-    ("usable: peso di sorgente 0 non esclude", NTR, "cfg.sourceWeight[d.source[i]] > 0)", "cfg.sourceWeight[d.source[i]] >= 0)"),
-    ("addestramento: la rete di partenza non e' una candidata (puo' regredire)", NTR, "double bestVal = initial, lastTrain = 0;\n\t\tint bestEpoch = 0, run = 0;", "double bestVal = Double.MAX_VALUE, lastTrain = 0;\n\t\tint bestEpoch = -1, run = 0;"),
-    ("addestramento: la copia della migliore epoca e' un alias", NTR, "bestEpoch = e + 1;\n\t\t\t\tbest = net.p.clone();", "bestEpoch = e + 1;\n\t\t\t\tbest = net.p;"),
-    ("addestramento: nessun arresto anticipato", NTR, "if (e + 1 - bestEpoch >= cfg.patience) {", "if (false) {"),
-    ("addestramento: simmetrie non applicate", NTR, "BoardSymmetry.MAP[cfg.augment ? rnd.nextInt(BoardSymmetry.COUNT) : 0]", "BoardSymmetry.MAP[0]"),
-    ("addestramento: peso di sorgente ignorato nel gradiente", NTR, "2 * w * err * (1 - y * y)", "2 * err * (1 - y * y)"),
-    ("addestramento: validazione esterna col lambda dell'addestramento", NTR, "final Config xcfg = cfg.extLambda >= 0 ? cfg.withLambda(cfg.extLambda) : cfg;", "final Config xcfg = cfg;"),
-    ("addestramento: maxSamples ignorato", NTR, "order = Arrays.copyOf(order, cfg.maxSamples);", "order = order;"),
-    ("passo dell'ottimizzatore: pesi non saturati", NTR, "\t\tadam.step(net.p, grad, lr, gradScale);\n\t\tclampToQuantRange(net);", "\t\tadam.step(net.p, grad, lr, gradScale);"),
-    ("saturazione: bias non limitati", NTR, "net.p[b2] = Math.max(-BIAS_LIMIT, Math.min(BIAS_LIMIT, net.p[b2]));", ""),
-    ("metriche: segno dell'esito confrontato al contrario", NTR, "if ((y > 0) == (o > 0)) {", "if ((y > 0) == (o < 0)) {"),
-    ("metriche: linea di base 'predire 0' sbagliata", NTR, "se0 += o * o;", "se0 += o;"),
-    ("fromQuantized: bias dello strato 1 con la scala sbagliata", TRN, "f.p[f.offL1B(r) + i] = b1[i] / sb;", "f.p[f.offL1B(r) + i] = b1[i] / NnueNetwork.QA;"),
-    ("fromQuantized: ftB con la scala sbagliata", TRN, "f.p[f.oFtB + j] = (double) ftB[j] / NnueNetwork.QA;", "f.p[f.oFtB + j] = (double) ftB[j] / NnueNetwork.QW;"),
-    ("forward: la permutazione di simmetria e' ignorata", TRN, "NnueNetwork.featureIndex(piece, map == null ? sq : map[sq])", "NnueNetwork.featureIndex(piece, sq)"),
 ]}
 
 

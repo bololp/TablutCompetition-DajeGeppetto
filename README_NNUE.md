@@ -78,14 +78,8 @@ Nuovi (`Tablut/src/it/unibo/ai/didattica/competition/tablut/...`):
 | `training/NnueTrainingCheck.java` | Gradiente vs differenze finite, quantizzazione, distillazione di un maestro noto, determinismo, `main` |
 | `client/NnueClientCheck.java` | Selezione `eval=` (logica e `main` reale in un sottoprocesso) |
 | `aiplayer/NnueBench.java` | Costo per valutazione e ricerca: CNN vs NNUE (completa e incrementale) |
-| `tools/mutation_nnue.py`, `tools/run_nnue_checks.sh` | Mutation testing (162 mutanti) e script "compila + tutti i test NNUE" |
+| `tools/mutation_nnue.py`, `tools/run_nnue_checks.sh` | Mutation testing (97 mutanti) e script "compila + tutti i test NNUE" |
 | `pesi_nnue/nnue_h64_l16_distilled_cnn_t1500000_v4.{nnue,log}` | Pesi distillati dalla CNN e log dell'addestramento |
-| `training/NnueDataset.java` | Formato dati per l'addestramento da partite (esito, valore di ricerca, partita, ply, distanza dalla fine), validazione severa, I/O gzip, unione, split per partita |
-| `training/NnueDataImport.java` | Importa i **log reali del server** (rigiocati con le regole), `dati.gz` e `DistillSet` |
-| `training/NnueSelfPlay.java`, `NnueRelabel.java` | Auto-gioco con ricerca a profondita' fissa (esito + valore di ricerca); rietichettatura di posizioni con la ricerca |
-| `training/NnueTrainer.java`, `NnueEvalNets.java`, `NnueDataTool.java` | Addestramento da dataset; misura di reti su dati; unire / dividere per partita / filtrare / ispezionare dataset |
-| `training/NnueDataCheck.java`, `NnueSelfPlayCheck.java`, `NnueTrainerCheck.java` | Test dei componenti precedenti |
-| `tools/nnue_pipeline.sh` | Pipeline completa con cancello di accettazione su partite vere |
 
 Modificati:
 
@@ -94,7 +88,6 @@ Modificati:
 | `aiplayer/Negamax.java` (+54/-1) | Un campo `inc` (sessione, `null` se l'evaluator non e' incrementale), creato per istanza (helper compresi); `reset` in `searchRoot` e `installForTest`, `push` in `exploreChild` dopo `makeMove`, `evaluate(sp, s)` a `depth == 0`; 3 accessor di test. Nessuna altra logica di ricerca cambia: con evaluator non incrementali il comportamento e' identico |
 | `aiplayer/EvaluatorLoader.java` | Riconosce `TABLUT_NNUE` (prima di CNN/MLP); `describe` |
 | `client/TablutNegamaxClient.java` | Opzione `eval=auto\|simple\|mlp\|cnn\|nnue` e `selectEvaluator` (sezione 4) |
-| `training/NnueDistiller.java` | (estensione) `forward` con permutazione di simmetria e `FloatNet.fromQuantized`, riusati dal trainer |
 | `aiplayer/NoAllocationCheck.java` | Aggiunta la rete NNUE all'invariante "zero allocazioni per nodo" |
 | `aiplayer/CacheCompareBench.java` | **Non legata alla migrazione**: usava la vecchia API `findBestMove(.., long[], int)` e **impediva la compilazione dell'intero progetto**; portata a `PositionHistory` (+5/-9 righe) |
 
@@ -127,18 +120,6 @@ java -cp "bin:lib/*" it.unibo.ai.didattica.competition.tablut.training.EqualTime
 BUILD=/tmp/tablut_nnue_build python3 tools/mutation_nnue.py all
 ```
 
-Addestramento da dati di gioco veri (dettagli e risultati nella sezione 6):
-```sh
-P=it.unibo.ai.didattica.competition.tablut.training
-java -cp "bin:lib/*" $P.NnueDataImport logs=logs out=dati/logs.gz                  # 92 log veri -> dataset (riproduce ogni mossa con le regole)
-java -cp "bin:lib/*" $P.NnueRelabel in=dati/logs.gz out=dati/logs_lab.gz eval=RETE.nnue depth=4   # aggiunge il valore di ricerca
-java -cp "bin:lib/*" $P.NnueDataTool split in=dati/logs_lab.gz train=dati/val.gz held=dati/test.gz pct=50 salt=7   # per partita
-java -cp "bin:lib/*" $P.NnueSelfPlay eval=RETE.nnue out=dati/sp.gz games=600 depth=4 eps=0.1 seed=11   # auto-gioco (deterministico)
-java -cp "bin:lib/*" $P.NnueTrainer data=dati/sp.gz val=dati/val.gz init=RETE.nnue out=nuova.nnue lambda=0.5 extlambda=0 epochs=30
-java -cp "bin:lib/*" $P.NnueEvalNets nets=RETE.nnue,nuova.nnue data=dati/test.gz lambda=0                 # confronto su partite vere mai usate
-sh tools/nnue_pipeline.sh lavoro/ RETE.nnue                                                                # tutto insieme, con cancello di accettazione
-```
-
 ## 5. Formato dei pesi (`TABLUT_NNUE v1`, testo)
 ```
 TABLUT_NNUE v1
@@ -156,62 +137,28 @@ checksum <CRC32>        <- dei valori come interi big-endian
 incoerenti, valori mancanti, in eccesso, non numerici o fuori da `short`, checksum errato, contenuto dopo il checksum, pesi che
 potrebbero andare in overflow. Cambiare feature, scale o struttura richiede una nuova versione del formato.
 
-## 6. Addestramento: due strade e cosa si e' misurato
+## 6. Pipeline di training: stato
 
 * **Conversione dei pesi CNN -> NNUE: non esiste e non e' possibile** (sezione 1).
-* **Distillazione** (`NnueDistiller`): campiona posizioni, le etichetta con un valutatore "maestro" (la CNN), addestra l'NNUE a imitarlo.
-  Cio' che impara e' quanto del maestro si esprime con (tipo, cella), con il suo stesso errore: non e' un allenamento sui risultati di gioco.
-  E' la strada che ha prodotto la rete distribuita.
-* **Addestramento da dati di gioco veri** (`NnueTrainer` e contorno), realizzato:
-  * **Dati** (`NnueDataset`, gzip, versionato, con validazione severa: solo posizioni non terminali, un Re non sul bordo, forma canonica delle etichette;
-    ogni file corrotto/troncato/alterato e' un errore, mai uno scarto silenzioso). Per posizione: lato al tratto, **esito** della partita (solo se vero),
-    **valore di ricerca** in [-1,1], chiave di partita, ply, distanza dalla fine, sorgente.
-  * **Sorgenti**: (1) i **92 log del server** in `logs/` (`NnueDataImport`): ogni mossa e' riprodotta con le regole del motore e la scacchiera e' confrontata
-    con quella registrata. Risultato: **0 divergenze su 2 850 posizioni** (l'unica differenza e' di rappresentazione: alla cattura il server lascia il Re sulla
-    scacchiera, il motore lo toglie; gestita e testata). Delle 92 partite, 16 sono doppioni (motori deterministici), 5 forfeit (mossa `null`), 4 mosse
-    illegali rifiutate dal server, 19 interrotte: **48 partite con esito vero, 2 268 posizioni** (vince il Bianco in 690 posizioni, il Nero in 1 578).
-    Un forfeit non e' un esito di gioco e non etichetta nulla. (2) **Auto-gioco** (`NnueSelfPlay`): ricerca a
-    profondita' fissa (riproducibile con qualunque numero di thread), apertura casuale, esplorazione `eps`, esito con le regole di `GameTracker`, partite troncate
-    senza esito. (3) `dati.gz` (`TABLUT_CNN_DATA`) e `DistillSet`, letti saltando le feature a mano, con il Re 3 -> 4.
-  * **Trainer**: bersaglio `lambda * valore + (1 - lambda) * esito` (con sconto opzionale `gamma^distanza dalla fine`), pesi per sorgente, aumento con le 8
-    simmetrie al volo (permutando gli indici delle feature), partenza da pesi esistenti (`init=`, `fromQuantized` esatto), **garanzia di non regressione**
-    (la rete di partenza e' la prima candidata: se nessuna epoca migliora la validazione, e' restituita invariata, bit per bit), validazione per partita e/o su
-    **dati esterni** (`val=`, mai usati per addestrare; `extlambda=0` li giudica sul solo esito reale), arresto anticipato, saturazione dei pesi all'intervallo quantizzabile.
-  * **Pipeline** (`tools/nnue_pipeline.sh`): import -> rietichettatura -> divisione per partita in validazione e **test** -> per giro: auto-gioco, addestramento,
-    confronto sul test; la candidata e' accettata solo se batte la corrente sul test di almeno `MARGIN`.
-
-**Esperimento reale** (sandbox 1 core; comandi e numeri in `risultati-misure.zip`, `esperimento_addestramento.txt`). Partenza: la rete distillata. Dati: 1 600 partite
-di auto-gioco (62 659 posizioni; la rete distillata contro se stessa, profondita' 4, eps 0,1: il Nero vince il 78 %) e le 48 partite vere divise PER PARTITA in validazione
-(25 partite, sceglie l'epoca) e **test finale (23 partite, mai usato per scegliere nulla)**. Sweep su lambda dichiarato in anticipo, tutte le varianti riportate:
-
-| rete (test finale: 23 partite vere) | MSE sull'esito reale | vincitore giusto | correlazione |
-|---|---|---|---|
-| **distillata (rete distribuita)** | **0,4031** | **84,9 %** | **0,717** |
-| addestrata, lambda 0 (solo esito) | 0,4914 | 81,3 % | 0,631 |
-| addestrata, lambda 0,25 | 0,4529 | 83,5 % | 0,670 |
-| addestrata, lambda 0,5 | 0,4700 | 82,0 % | 0,654 |
-| lambda 0,75 e 1 | = distillata (nessuna epoca migliora la validazione: rete invariata) | | |
-
-Le stesse reti sulla *validazione* (25 partite) sembravano migliori della distillata: la scelta dell'epoca su 25 partite e' rumore. Validazione incrociata con gli
-esiti reali nell'addestramento (meta' dei log, peso 10, 10 epoche, parametri fissi; si valuta sull'altra meta'): MSE 0,4209 contro 0,4031 su una meta' (peggio), 0,4374
-contro 0,4390 sull'altra (pari). **Conclusione: con i dati ottenibili qui (1 600 partite di auto-gioco, 48 partite vere) nessuna variante migliora la rete distillata nel
-predire l'esito di partite vere non viste; alcune la peggiorano.** La rete distribuita resta quindi la distillata e non si e' eseguita un'arena con le reti sperimentali.
-Cause plausibili, NON verificate: auto-gioco di una sola rete contro se stessa (distribuzione molto diversa dalle partite vere), esiti rumorosi (eps) e sbilanciati,
-poche partite vere (23 di test: l'incertezza e' grande, le posizioni di una partita sono correlate). Cosa servirebbe per provare ad andare oltre: molte piu' partite e
-avversari diversi (NNUE contro CNN, altri motori), etichette di ricerca piu' profonde, riequilibrio degli esiti, e un test di partite vere molto piu' grande o l'arena a tempo reale.
+* **Realizzato**: distillazione `NnueDistiller`. Campiona posizioni da partite miste casuali/avide (con le 8 simmetrie del quadrato:
+  le regole sono invarianti, l'NNUE no), le etichetta con il valutatore "maestro", addestra l'NNUE (Adam, gradiente a mano verificato con
+  differenze finite), la quantizza e misura la rete **quantizzata** su un held-out separato per posizione di partenza.
+  Cio' che impara e' quanto del maestro si esprime con (tipo, cella), con il suo stesso errore: **non** e' un allenamento sui risultati di gioco.
+* **Non realizzato (serve per una NNUE migliore del maestro)**: addestramento da dati di gioco veri (esiti di partite, valori di ricerca profonda).
+  Servono: un lettore che porti i campioni nel formato `NnueDistiller.Data` (scacchiera `byte[81]` con i codici di `BoardConstants`,
+  lato al tratto, bersaglio in [-1,1]) — attenzione: `DistillSet` codifica il Re come **3**, `FastState` come **4**; piu' dati e,
+  probabilmente, una rete piu' larga (`hidden`, `l2`). `train` e `quantize` si riusano cosi' come sono.
 
 ## 7. Risultati misurati
 
 Ambiente: sandbox con **1 core**, JDK 21 (compilato con `--release 8`), un thread di ricerca. Le misure variano di ~10-15 % da una
 esecuzione all'altra: sono riportati gli intervalli di tre esecuzioni.
 
-**Test** (tutti verdi sull'albero finale; l'addestramento da dati di gioco aggiunge `NnueDataCheck` 153 verifiche, `NnueSelfPlayCheck` 176, `NnueTrainerCheck` 170, e lo smoke test
-della pipeline in `tools/run_nnue_checks.sh`): `NnueCheck` 106 174 verifiche; `NnueSearchCheck` 3 410 verifiche (330 ricerche confrontate,
+**Test** (tutti verdi sull'albero finale): `NnueCheck` 106 174 verifiche; `NnueSearchCheck` 3 410 verifiche (330 ricerche confrontate,
 132 anche con il motore storico, 3 383 185 nodi, 5 139 438 passi incrementali, zero ricostruzioni di ripiego, zero errori negli helper Lazy SMP,
 MCTS con l'NNUE a 1 e 2 thread);
-`NnueTrainingCheck` 769; `NnueClientCheck` 50; `NoAllocationCheck`: NNUE **0,004 B/nodo** su 499 625 nodi. **Mutation testing: 162/162 mutanti rilevati**
-(rete e aritmetica 64, integrazione con `Negamax` 8, client 7, distillatore 18, formato dati e importatori 36, auto-gioco e rietichettatura 11, trainer 18);
-mutanti non rilevati al primo giro sono stati risolti
+`NnueTrainingCheck` 769; `NnueClientCheck` 50; `NoAllocationCheck`: NNUE **0,004 B/nodo** su 499 625 nodi. **Mutation testing: 97/97 mutanti rilevati**
+(rete e aritmetica 64, integrazione con `Negamax` 8, client 7, distillatore 18); mutanti non rilevati al primo giro sono stati risolti
 rafforzando i test o riconosciuti equivalenti (Adam e' invariante alla scala del gradiente). Test esistenti rieseguiti sull'albero finale (quelli vicini alle zone
 toccate): `NoAllocation`, `ClientDefaults`, `NegamaxClientArgs`, `ClientHistoryIntegration`, `CachingEvaluator`, `RepetitionAndStalemate`,
 `ExactKeyStack`, `HistoryExactness`, `PVS`, `SearchOptimizations`, `OrderingExt`, `TwoSlotTT`, `LazySmp`, `MctsSearch`, `CnnEvaluator`,
@@ -252,9 +199,6 @@ CNN **+15 =1 -14** contro NNUE, punteggio CNN 51,7 % [IC95 34,6 % - 68,3 %]; pro
 ## 8. Limiti, decisioni aperte, problemi preesistenti
 
 * **La rete distribuita e' una copia della CNN**, non un allenamento sui dati di gioco: la sua qualita' e' limitata da quella del maestro e da (tipo, cella).
-  L'addestramento da dati di gioco e' completo e testato, ma **con i dati disponibili non ha prodotto una rete migliore** (sezione 6): non e' stata sostituita.
-* I 92 log veri sono pochi (48 partite con esito, ~2 300 posizioni, di giocatori molto diversi) e i test su 23 partite hanno un'incertezza grande; il trainer dichiara
-  cosa misura ma non puo' creare dati che non ci sono.
   Il guadagno misurato e' di **velocita'** (valutazione ~18x, nodi/s ~7-9x, +0,7-1,1 ply a tempo uguale), non di forza.
 * L'arena e' piccola (30 partite, IC95 ~ +-17 punti), a 200 ms/mossa (profondita' ~4-5, molto sotto quelle di gara) e senza la cache della CNN
   (che in produzione le da' ~+16 % di nodi/s): conclusioni sulla forza in gara richiedono molte piu' partite al tempo reale.
