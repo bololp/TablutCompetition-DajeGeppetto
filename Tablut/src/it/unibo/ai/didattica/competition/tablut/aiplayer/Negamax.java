@@ -89,6 +89,31 @@ import it.unibo.ai.didattica.competition.tablut.engine.ZobristHash;
  * solo i (rari) nodi il cui valore potrebbe dipendere dalla storia vengono
  * esclusi dalla memorizzazione, in modo conservativo e verificabile.
  * <p>
+ * <b>Punteggi di vittoria e transposition table</b>: una vittoria/sconfitta vale
+ * {@code +/-(WIN_SCORE + d)}, con {@code d} la profondita' RESIDUA nel nodo terminale (piu' e' alta, prima si vince).
+ * Quel {@code d} dipende dalla profondita' della ricerca che ha trovato la vittoria, non dalla posizione: letto
+ * dalla TT in una ricerca con profondita' diversa (altra iterazione, altro thread, altra mossa di partita)
+ * non e' piu' una distanza, e una vittoria lontana salvata da una ricerca profonda poteva battere una vittoria in 1
+ * ({@code 1000001} contro {@code 1000000}); inoltre l'uscita anticipata alla radice ({@code bestScore >= WIN_SCORE})
+ * la dava per buona senza verificarla. In piu' una vittoria dimostrata puo' dipendere dalla storia (una risposta che
+ * ripete una posizione e' pareggio) e la TT, che parte dalla sola board, non lo sa (Graph History Interaction): in
+ * partita questo ha fatto saltare due vittorie in 1 e chiudere la partita in pareggio per ripetizione. Regole:
+ * <ol>
+ * <li>un valore con {@code |score| >= WIN_SCORE} NON si legge mai dalla TT (ne' esatto, ne' come limite): della voce
+ * resta utile solo la mossa, per l'ordinamento. Ogni punteggio di vittoria/sconfitta e' quindi ricavato dalla ricerca
+ * corrente, lungo il percorso corrente e con la storia reale, e vale esattamente {@code WIN_SCORE + d} con {@code d}
+ * coerente in tutto l'albero. I valori euristici ({@code |score| < WIN_SCORE}) si riusano come sempre;</li>
+ * <li>la valutazione statica e' limitata a {@code +/-EVAL_LIMIT} ({@code WIN_SCORE - 1}, {@code NaN} = 0), cosi' nessun
+ * valore euristico puo' essere scambiato per una matta;</li>
+ * <li>alla radice, se una mossa vince subito (la stessa condizione dei nodi terminali) si gioca senza cercare.</li>
+ * </ol>
+ * Conseguenza: ogni vittoria vista dalla radice e' dimostrata, e la ricerca iterativa (senza pruning non sicuri) si
+ * ferma alla prima profondita' in cui compare, che e' la vittoria piu' breve. Giocando a ogni turno la mossa di quella
+ * ricerca, la distanza dalla vittoria scende di almeno 2 semi-mosse per turno, qualunque sia la difesa (ripetizioni
+ * comprese, perche' la ricerca le conta come pareggio): non si puo' girare in tondo. Costo: le prove di vittoria si
+ * rifanno a ogni mossa invece di essere lette dalla TT, ma con la mossa della TT come prima mossa dell'ordinamento
+ * sono alberi molto stretti ({@code MateSoundnessCheck} verifica tutto questo).
+ * <p>
  * <b>Principal Variation Search (PVS)</b>: in ogni nodo la PRIMA mossa (quella
  * che l'ordinamento ritiene la migliore: mossa della TT / dell'iterazione
  * precedente) viene cercata a finestra piena (-beta,-alpha); le successive con
@@ -156,6 +181,21 @@ public class Negamax {
 	// package-private (non private): permette ai test (stesso package) di verificare i punteggi esatti
 	// restituiti per vittoria/sconfitta, invece di dover indovinare una soglia arbitraria.
 	static final double WIN_SCORE = 1_000_000;
+
+	/**
+	 * Valore massimo (in modulo) che la valutazione STATICA puo' restituire alla ricerca: {@code WIN_SCORE - 1}. Un
+	 * punteggio {@code >= WIN_SCORE} (in modulo) significa SEMPRE "vittoria/sconfitta dimostrata" (si veda la sezione
+	 * "Punteggi di vittoria e transposition table" del javadoc di classe): una valutazione euristica fuori scala (rete
+	 * mal addestrata, overflow, {@code NaN}) non deve mai poter essere scambiata per una matta.
+	 */
+	static final double EVAL_LIMIT = WIN_SCORE - 1;
+
+	/**
+	 * Se {@code true} (default) la radice gioca subito una mossa che vince immediatamente (il Re raggiunge il bordo, o
+	 * la pedina nera cattura il Re) senza cercare. Il campo esiste solo perche' i test possano spegnere questa
+	 * scorciatoia e verificare che anche la RICERCA, da sola, scelga correttamente (difesa in profondita').
+	 */
+	boolean immediateWinShortcut = true;
 
 	/** Margine di sicurezza tolto al tempo a disposizione, per lasciare tempo
 	 *  di risalire la ricorsione e inviare la mossa al server prima dello scadere
@@ -594,6 +634,7 @@ public class Negamax {
 		}
 
 		final int mySign = (s.turn == BoardConstants.WHITE_TURN) ? 1 : -1;
+
 		// Storia: copia nello stack interno, che la ricerca estende/accorcia ma che non altera mai l'array del chiamante.
 		ensureHist(history.size() + maxDepth + 8);
 		histLen = history.copyKeysTo(histKeys, 0);
@@ -603,6 +644,39 @@ public class Negamax {
 		int best = rootMoves[0];
 		double bestScore = 0;
 		int depthReached = 0;
+
+		// Vittoria immediata: se una mossa legale vince subito (partita finita dopo la mossa, a nostro favore) la si gioca
+		// senza cercare. E' esattamente la stessa condizione che la ricerca usa per i nodi terminali ({@code winner}, dopo
+		// makeMove), quindi non puo' divergere dalle regole. Una vittoria in 1 e' la piu' rapida possibile: nessuna
+		// ricerca, TT o limite di tempo puo' fare meglio, e nessuna puo' farla scartare.
+		if (immediateWinShortcut) {
+			final byte myWinner = (s.turn == BoardConstants.WHITE_TURN) ? FastState.WINNER_WHITE : FastState.WINNER_BLACK;
+			final UndoInfo wu = undoStack[0];
+			for (int mi = 0; mi < nRoot; mi++) {
+				s.makeMove(rootMoves[mi], wu);
+				final boolean wins = s.winner == myWinner;
+				s.unmakeMove(rootMoves[mi], wu);
+				if (wins) {
+					// stato "dopo la ricerca" coerente (lo leggono i test sull'ordine radice): la mossa vincente in testa
+					// con il suo valore, le altre mai cercate
+					final int winMove = rootMoves[mi];
+					rootMoves[mi] = rootMoves[0];
+					rootMoves[0] = winMove;
+					rootScores[0] = WIN_SCORE;
+					for (int i = 1; i < nRoot; i++) {
+						rootScores[i] = Double.NEGATIVE_INFINITY;
+					}
+					this.nodeCounter = nRoot + 1;
+					this.lastDepthReached = 1;
+					this.lastNodeCount = nodeCounter;
+					this.lastScore = WIN_SCORE; // come una vittoria in 1 trovata dalla ricerca: WIN_SCORE + 0 (profondita' residua)
+					this.lastPvsScouts = 0;
+					this.lastPvsReSearches = 0;
+					this.lastBestMove = winMove;
+					return winMove;
+				}
+			}
+		}
 
 		for (int depth = 1; depth <= maxDepth && !timeUp; depth++) {
 			if (workerId > 0 && skipDepth(workerId, depth)) {
@@ -668,6 +742,14 @@ public class Negamax {
 		this.lastPvsReSearches = pvsReSearches;
 		this.lastBestMove = best;
 		return best;
+	}
+
+	/** Riporta una valutazione statica nell'intervallo {@code [-EVAL_LIMIT, EVAL_LIMIT]}; {@code NaN} diventa 0. Nessuna allocazione. */
+	static double clampEval(double e) {
+		if (e != e) {
+			return 0; // NaN
+		}
+		return e > EVAL_LIMIT ? EVAL_LIMIT : (e < -EVAL_LIMIT ? -EVAL_LIMIT : e);
 	}
 
 	// ------------------------------------------------------------------------------------------ ricorsione
@@ -780,7 +862,10 @@ public class Negamax {
 			tt.probeInto(s, depth, pr);
 			if (pr.hit) {
 				ttMovePacked = pr.packedMove; // utile per l'ordinamento anche se la profondita' non basta
-				if (pr.depthSufficient) {
+				// Un valore di vittoria/sconfitta (|score| >= WIN_SCORE) NON si riusa mai dalla TT, ne' come valore esatto
+				// ne' come limite: si puo' usare solo la mossa (sopra) per l'ordinamento. Il motivo e' nel javadoc di
+				// classe ("Punteggi di vittoria e transposition table"). I valori euristici si riusano come sempre.
+				if (pr.depthSufficient && Math.abs(pr.score) < WIN_SCORE) {
 					if (pr.flag == TranspositionTable.EXACT) {
 						return pr.score;
 					} else if (pr.flag == TranspositionTable.LOWER_BOUND) {
@@ -800,7 +885,7 @@ public class Negamax {
 		}
 
 		if (depth == 0) {
-			return perspective * (inc != null ? inc.evaluate(sp, s) : evaluator.evaluate(s));
+			return perspective * clampEval(inc != null ? inc.evaluate(sp, s) : evaluator.evaluate(s));
 		}
 
 		final int[] moves = moveStack[sp];

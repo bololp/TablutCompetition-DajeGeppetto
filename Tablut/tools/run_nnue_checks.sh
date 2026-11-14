@@ -34,6 +34,7 @@ check training.NnueSelfPlayCheck   # auto-gioco rigiocato con le regole storiche
 check training.NnueTrainerCheck    # addestramento da dati di gioco: apprende, non regredisce, i dati esterni non addestrano
 check client.NnueClientCheck       # selezione eval=auto|simple|mlp|cnn|nnue nel client reale
 check aiplayer.NoAllocationCheck   # zero allocazioni per nodo (include l'NNUE)
+check aiplayer.MateSoundnessCheck # punteggi di vittoria dimostrati dalla ricerca: la TT non li crea, non li nasconde, non ne altera la distanza
 
 # ---- smoke test della pipeline di addestramento (tools/nnue_pipeline.sh): rifiuto, accettazione, errori
 echo "== tools/nnue_pipeline.sh (smoke test)"

@@ -16,6 +16,11 @@ import it.unibo.ai.didattica.competition.tablut.engine.PositionHistory;
  * profondita' fissa e a thread singolo, lo stesso punteggio, la stessa mossa e lo stesso numero di nodi di questa. Nessun
  * codice di gioco la usa. E' stata tagliata solo la parte Lazy SMP (non confrontabile: non deterministica); la logica di
  * ricerca e' quella originale, riga per riga. Non va "migliorata": perderebbe il suo valore di riferimento.
+ * <p>
+ * UNICA eccezione, fatta in modo speculare a {@link Negamax} perche' l'equivalenza (punteggio, mossa, profondita' e nodi)
+ * continui a valere: le tre regole sui punteggi di vittoria (i valori {@code |score| >= WIN_SCORE} non si leggono dalla TT,
+ * la valutazione statica e' limitata a {@code +/-(WIN_SCORE-1)}, la vittoria immediata alla radice si gioca subito). Si
+ * veda la sezione "Punteggi di vittoria e transposition table" del javadoc di {@link Negamax} e {@code MateSoundnessCheck}.
  */
 public class LegacyNegamax {
 
@@ -196,6 +201,22 @@ public class LegacyNegamax {
 		}
 
 		int mySign = (rootState.getTurn() == Turn.WHITE) ? 1 : -1;
+
+		// Vittoria immediata: come in Negamax.searchRoot, la prima mossa (in ordine di generazione) che vince subito si
+		// gioca senza cercare.
+		final Turn myWin = (mySign == 1) ? Turn.WHITEWIN : Turn.BLACKWIN;
+		for (Action a : rootMoves) {
+			if (AshtonRules.applyMove(rootState, a).getTurn() == myWin) {
+				this.nodeCounter = rootMoves.size() + 1;
+				this.lastDepthReached = 1;
+				this.lastNodeCount = nodeCounter;
+				this.lastScore = WIN_SCORE;
+				this.lastPvsScouts = 0;
+				this.lastPvsReSearches = 0;
+				return a;
+			}
+		}
+
 		long rootHash = ZobristHasher.fullHash(rootState); // unico calcolo completo: O(81), una volta per mossa
 		// Copia difensiva e mutabile: la ricerca vi aggiunge/rimuove le proprie
 		// posizioni ipotetiche (avanti prima di ricorrere, indietro dopo il
@@ -310,6 +331,15 @@ public class LegacyNegamax {
 	 *                    esattamente il percorso dalla radice fino a questo nodo.
 	 */
 	// package-private per lo stesso motivo di exploreChild, si veda sopra.
+	/** Come {@code Negamax.clampEval}: la valutazione statica non puo' mai essere scambiata per una matta; NaN = 0. */
+	static double clampEval(double e) {
+		if (e != e) {
+			return 0;
+		}
+		final double limit = WIN_SCORE - 1;
+		return e > limit ? limit : (e < -limit ? -limit : e);
+	}
+
 	double negamax(State state, int depth, double alpha, double beta, int perspective, long hash,
 			PositionHistory history) {
 		nodeCounter++;
@@ -340,7 +370,9 @@ public class LegacyNegamax {
 			TranspositionTable.ProbeResult probe = tt.probe(hash, depth);
 			if (probe.hit) {
 				ttMovePacked = probe.packedMove; // utile per l'ordinamento anche se la profondita' non basta
-				if (probe.depthSufficient) {
+				// Stessa regola di Negamax (si veda il suo javadoc, "Punteggi di vittoria e transposition table"):
+				// un valore |score| >= WIN_SCORE non si riusa mai dalla TT, resta utile solo la mossa.
+				if (probe.depthSufficient && Math.abs(probe.score) < WIN_SCORE) {
 					if (probe.flag == TranspositionTable.EXACT) {
 						return probe.score;
 					} else if (probe.flag == TranspositionTable.LOWER_BOUND) {
@@ -360,7 +392,7 @@ public class LegacyNegamax {
 		}
 
 		if (depth == 0) {
-			return perspective * evaluator.evaluate(state);
+			return perspective * clampEval(evaluator.evaluate(state));
 		}
 
 		List<Action> moves = AshtonRules.generateMoves(state);
