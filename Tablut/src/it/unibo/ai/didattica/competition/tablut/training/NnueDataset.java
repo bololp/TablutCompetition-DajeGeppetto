@@ -50,7 +50,7 @@ public final class NnueDataset {
 	public static final String MAGIC = "TABLUT_NNUE_DATA v1";
 	public static final byte SRC_LOG = 0, SRC_SELFPLAY = 1, SRC_IMPORT = 2;
 	/** 81 * MAX_SAMPLES deve stare in un array di byte. */
-	public static final int MAX_SAMPLES = 20_000_000;
+	public static final int MAX_SAMPLES = 200_000_000;
 	public static final int MAX_WHITE = 8, MAX_BLACK = 16;
 
 	public final int n;
