@@ -422,7 +422,12 @@ public class TablutNegamaxClient extends TablutClient {
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
-
+		System.out.println(" ___        _        ___                    _   _       \n" + //
+						"|   \\ __ _ (_)___   / __|___ _ __ _ __  ___| |_| |_ ___ \n" + //
+						"| |) / _` || / -_) | (_ / -_) '_ \\ '_ \\/ -_)  _|  _/ _ \\\n" + //
+						"|___/\\__,_|/ \\___|  \\___\\___| .__/ .__/\\___|\\__|\\__\\___/\n" + //
+						"         |__/               |_|  |_|                    \n" + //
+						"");
 		System.out.println("Sono il giocatore " + this.getPlayer().toString() + "!");
 
 		while (true) {
