@@ -114,33 +114,43 @@ public final class NnueTrainer {
 
 	/** Bersaglio del campione {@code i} (vedi la documentazione della classe), oppure {@code NaN} se non ha alcuna etichetta. */
 	public static double target(Config cfg, NnueDataset d, int i) {
-		final boolean hv = d.valValid[i] == 1, ho = d.outValid[i] == 1;
+		final boolean hv = d.valValid(i) == 1, ho = d.outValid(i) == 1;
 		double o = 0;
 		if (ho) {
-			o = d.outcome[i];
-			if (cfg.gamma < 1.0 && d.toEnd[i] >= 0) {
-				o *= Math.pow(cfg.gamma, d.toEnd[i]);
+			o = d.outcome(i);
+			if (cfg.gamma < 1.0 && d.toEnd(i) >= 0) {
+				o *= Math.pow(cfg.gamma, d.toEnd(i));
 			}
 		}
 		if (hv && ho) {
-			return cfg.lambda * d.value[i] + (1.0 - cfg.lambda) * o;
+			return cfg.lambda * d.value(i) + (1.0 - cfg.lambda) * o;
 		}
 		if (hv) {
-			return d.value[i];
+			return d.value(i);
 		}
 		return ho ? o : Double.NaN;
 	}
 
 	/** Indici dei campioni con un bersaglio e peso di sorgente > 0. */
 	static int[] usable(Config cfg, NnueDataset d, int[] idx, boolean applyWeights) {
-		final int[] out = new int[idx.length];
+		int cnt = 0;
+		for (int i : idx) {
+			if (isUsable(cfg, d, i, applyWeights)) {
+				cnt++;
+			}
+		}
+		final int[] out = new int[cnt]; // dimensione esatta: con centinaia di milioni di indici una copia in piu' pesa gigabyte
 		int k = 0;
 		for (int i : idx) {
-			if (!Double.isNaN(target(cfg, d, i)) && (!applyWeights || cfg.sourceWeight[d.source[i]] > 0)) {
+			if (isUsable(cfg, d, i, applyWeights)) {
 				out[k++] = i;
 			}
 		}
-		return Arrays.copyOf(out, k);
+		return out;
+	}
+
+	private static boolean isUsable(Config cfg, NnueDataset d, int i, boolean applyWeights) {
+		return !Double.isNaN(target(cfg, d, i)) && (!applyWeights || cfg.sourceWeight[d.source(i)] > 0);
 	}
 
 	// ====================================================================== addestramento
@@ -200,7 +210,7 @@ public final class NnueTrainer {
 		final NnueDistiller.Ws ws = new NnueDistiller.Ws(net.hidden, net.l2);
 		double s = 0;
 		for (int i : idx) {
-			final double y = Math.tanh(NnueDistiller.forward(net, d.boards, 81 * i, d.role[i], null, ws));
+			final double y = Math.tanh(NnueDistiller.forward(net, d.boardArray(i), d.boardOffset(i), d.role(i), null, ws));
 			final double e = y - target(cfg, d, i);
 			s += e * e;
 		}
@@ -256,7 +266,7 @@ public final class NnueTrainer {
 			log.printf("avvio: %d campioni di addestramento, %d di held-out%s, %d parametri; perdita di validazione iniziale %.5f%n", order.length, val.length,
 					useExtra ? " + " + xval.length + " esterni (scelgono l'epoca)" : "", net.numParams(), initial);
 		}
-		final long totalSteps = (long) cfg.epochs * ((order.length + cfg.batch - 1) / cfg.batch);
+		final long totalSteps = (long) cfg.epochs * (((long) order.length + cfg.batch - 1) / cfg.batch);
 		long step = 0;
 		double bestVal = initial, lastTrain = 0;
 		int bestEpoch = 0, run = 0;
@@ -269,18 +279,19 @@ public final class NnueTrainer {
 				order[j] = t;
 			}
 			double sum = 0, wsum = 0;
-			for (int b = 0; b < order.length; b += cfg.batch) {
-				final int end = Math.min(order.length, b + cfg.batch);
+			for (int b = 0, end; b < order.length; b = end) {
+				end = (int) Math.min((long) order.length, (long) b + cfg.batch);
 				Arrays.fill(g, 0.0);
 				for (int k = b; k < end; k++) {
 					final int i = order[k];
-					final double w = cfg.sourceWeight[d.source[i]];
+					final byte role = d.role(i);
+					final double w = cfg.sourceWeight[d.source(i)];
 					final int[] map = BoardSymmetry.MAP[cfg.augment ? rnd.nextInt(BoardSymmetry.COUNT) : 0];
-					final double y = Math.tanh(NnueDistiller.forward(net, d.boards, 81 * i, d.role[i], map, ws));
+					final double y = Math.tanh(NnueDistiller.forward(net, d.boardArray(i), d.boardOffset(i), role, map, ws));
 					final double err = y - target(cfg, d, i);
 					sum += w * err * err;
 					wsum += w;
-					NnueDistiller.backward(net, d.role[i], 2 * w * err * (1 - y * y), ws, g);
+					NnueDistiller.backward(net, role, 2 * w * err * (1 - y * y), ws, g);
 				}
 				final double frac = totalSteps <= 1 ? 1.0 : (double) step / (totalSteps - 1);
 				optimizerStep(adam, net, g, cfg.lr + (cfg.lrEnd - cfg.lr) * frac, 1.0 / (end - b));
@@ -356,16 +367,16 @@ public final class NnueTrainer {
 		int accSign = 0;
 		final Corr co = new Corr(), cv = new Corr();
 		for (int i : idx) {
-			System.arraycopy(d.boards, 81 * i, fs.board, 0, 81);
-			fs.turn = d.role[i] == 1 ? BoardConstants.BLACK_TURN : BoardConstants.WHITE_TURN;
+			d.copyBoard(i, fs.board, 0);
+			fs.turn = d.role(i) == 1 ? BoardConstants.BLACK_TURN : BoardConstants.WHITE_TURN;
 			final double y = ev.evaluate(fs);
 			final double t = target(cfg, d, i);
 			if (!Double.isNaN(t)) {
 				seT += (y - t) * (y - t);
 				m.nTarget++;
 			}
-			if (d.outValid[i] == 1) {
-				final double o = d.outcome[i];
+			if (d.outValid(i) == 1) {
+				final double o = d.outcome(i);
 				seO += (y - o) * (y - o);
 				se0 += o * o;
 				m.nOutcome++;
@@ -377,10 +388,11 @@ public final class NnueTrainer {
 					}
 				}
 			}
-			if (d.valValid[i] == 1) {
-				seV += (y - d.value[i]) * (y - d.value[i]);
+			if (d.valValid(i) == 1) {
+				final double v = d.value(i);
+				seV += (y - v) * (y - v);
 				m.nValue++;
-				cv.add(y, d.value[i]);
+				cv.add(y, v);
 			}
 		}
 		m.mseTarget = m.nTarget == 0 ? 0 : seT / m.nTarget;
@@ -395,11 +407,11 @@ public final class NnueTrainer {
 
 	// ====================================================================== main
 
-	private static List<NnueDataset> loadAll(String csv) throws IOException {
-		final List<NnueDataset> l = new ArrayList<>();
+	private static List<String> paths(String csv) {
+		final List<String> l = new ArrayList<>();
 		for (String p : csv.split(",")) {
 			if (!p.trim().isEmpty()) {
-				l.add(NnueDataset.load(p.trim()));
+				l.add(p.trim());
 			}
 		}
 		return l;
@@ -482,11 +494,11 @@ public final class NnueTrainer {
 				start = NnueDistiller.FloatNet.fromQuantized(q);
 			}
 			cfg.validate();
-			final NnueDataset d = NnueDataset.merge(loadAll(data));
+			final NnueDataset d = NnueDataset.loadMerged(paths(data)); // legge i file direttamente nel dataset finale: niente copie, niente limite di 2^31 byte
 			System.out.println("addestramento: " + d.describe());
 			NnueDataset ext = null;
 			if (val != null) {
-				ext = NnueDataset.merge(loadAll(val));
+				ext = NnueDataset.loadMerged(paths(val));
 				System.out.println("validazione esterna: " + ext.describe());
 			}
 			final int[][] sp = d.splitByGame(cfg.valSalt, cfg.valPct);
