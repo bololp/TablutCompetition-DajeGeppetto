@@ -23,27 +23,38 @@ public final class NnueDataTool {
 
 	/** Campioni di {@code d} delle sorgenti {@code sources} (null = tutte) e con le etichette richieste. */
 	public static NnueDataset filter(NnueDataset d, boolean[] sources, boolean needOutcome, boolean needValue) {
-		final int[] keep = new int[d.n];
+		int cnt = 0;
+		for (int i = 0; i < d.n; i++) {
+			if (keeps(d, i, sources, needOutcome, needValue)) {
+				cnt++;
+			}
+		}
+		final int[] keep = new int[cnt]; // dimensione esatta (con centinaia di milioni di campioni una copia in piu' degli indici pesa gigabyte)
 		int k = 0;
 		for (int i = 0; i < d.n; i++) {
-			if ((sources == null || sources[d.source[i]]) && (!needOutcome || d.outValid[i] == 1) && (!needValue || d.valValid[i] == 1)) {
+			if (keeps(d, i, sources, needOutcome, needValue)) {
 				keep[k++] = i;
 			}
 		}
-		return d.subset(java.util.Arrays.copyOf(keep, k));
+		return d.subset(keep);
 	}
 
-	private static List<NnueDataset> loadAll(String csv) throws IOException {
-		final List<NnueDataset> l = new ArrayList<>();
+	private static boolean keeps(NnueDataset d, int i, boolean[] sources, boolean needOutcome, boolean needValue) {
+		return (sources == null || sources[d.source(i)]) && (!needOutcome || d.outValid(i) == 1) && (!needValue || d.valValid(i) == 1);
+	}
+
+	/** Unisce i file di {@code csv} leggendoli direttamente nel dataset finale (mai due copie dei dati, nessun limite di 2^31 byte). */
+	private static NnueDataset loadAll(String csv) throws IOException {
+		final List<String> l = new ArrayList<>();
 		for (String p : csv.split(",")) {
 			if (!p.trim().isEmpty()) {
-				l.add(NnueDataset.load(p.trim()));
+				l.add(p.trim());
 			}
 		}
 		if (l.isEmpty()) {
 			throw new IllegalArgumentException("nessun file in input");
 		}
-		return l;
+		return NnueDataset.loadMerged(l);
 	}
 
 	public static void main(String[] args) throws IOException {
@@ -96,7 +107,7 @@ public final class NnueDataTool {
 				if (out == null) {
 					usage();
 				}
-				final NnueDataset m = NnueDataset.merge(loadAll(in));
+				final NnueDataset m = loadAll(in);
 				m.save(out);
 				System.out.println("scritto " + out + ": " + m.describe());
 				break;
@@ -105,7 +116,7 @@ public final class NnueDataTool {
 				if (train == null || held == null || pct < 0 || pct > 100) {
 					usage();
 				}
-				final NnueDataset d = NnueDataset.merge(loadAll(in));
+				final NnueDataset d = loadAll(in);
 				final int[][] sp = d.splitByGame(salt, pct);
 				final NnueDataset t = d.subset(sp[0]), h = d.subset(sp[1]);
 				t.save(train);
@@ -129,7 +140,7 @@ public final class NnueDataTool {
 						src[id] = true;
 					}
 				}
-				final NnueDataset f = filter(NnueDataset.merge(loadAll(in)), src, needOutcome, needValue);
+				final NnueDataset f = filter(loadAll(in), src, needOutcome, needValue);
 				f.save(out);
 				System.out.println("scritto " + out + ": " + f.describe());
 				break;

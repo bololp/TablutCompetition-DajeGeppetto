@@ -448,7 +448,7 @@ public final class NnueDataImport {
 			}
 			in.readInt(); // versione delle feature: non serve
 			final int nf = in.readInt(), n = in.readInt();
-			if (n < 0 || n > NnueDataset.MAX_SAMPLES || nf < 1 || nf > 4096) {
+			if (n < 0 || n > NnueDataset.FLAT_MAX || nf < 1 || nf > 4096) { // qui le colonne sono array unici (81 * n deve stare in un int)
 				throw new IOException("intestazione non plausibile (n=" + n + ", nf=" + nf + "): " + path);
 			}
 			final byte[] cells = new byte[81 * n], role = new byte[n], outcome = new byte[n];
@@ -481,7 +481,7 @@ public final class NnueDataImport {
 			}
 			in.readInt();
 			final int nf = in.readInt(), n = in.readInt();
-			if (n < 0 || n > NnueDataset.MAX_SAMPLES || nf < 1 || nf > 4096) {
+			if (n < 0 || n > NnueDataset.FLAT_MAX || nf < 1 || nf > 4096) { // qui le colonne sono array unici (81 * n deve stare in un int)
 				throw new IOException("intestazione non plausibile (n=" + n + ", nf=" + nf + "): " + path);
 			}
 			final byte[] cells = new byte[81 * n], role = new byte[n], outcome = new byte[n], outValid = new byte[n], source = new byte[n];

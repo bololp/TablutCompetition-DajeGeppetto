@@ -627,6 +627,42 @@ public final class NnueDataset {
 			}
 			k += d.n;
 		}
+		if (t.n == 0) {
+			t.allocAll(0); // unione di nessuno / di dataset vuoti: colonne vuote, mai null
+		}
+		return new NnueDataset(checked(t));
+	}
+
+	/**
+	 * Copia di questo dataset con {@code value} e {@code valValid} SOSTITUITI (es. rietichettatura). Le altre colonne sono CONDIVISE, non copiate
+	 * (gli array di un dataset non si modificano mai dopo la costruzione): costa solo le due colonne nuove. Se il dataset non e' paginato i due array
+	 * passati diventano le colonne della copia (come con il costruttore): il chiamante non deve piu' modificarli. I dati sono validati.
+	 *
+	 * @throws IllegalArgumentException se le lunghezze non sono {@code n} o un campione viola le invarianti
+	 */
+	public NnueDataset withValues(float[] newValue, byte[] newValValid) {
+		if (newValue == null || newValValid == null || newValue.length != n || newValValid.length != n) {
+			throw new IllegalArgumentException("colonne di lunghezza incoerente (n = " + n + ")");
+		}
+		final Store t = new Store(n, s.shift);
+		for (int c = 0; c < s.chunks; c++) {
+			t.boards[c] = s.boards[c];
+			t.role[c] = s.role[c];
+			t.outcome[c] = s.outcome[c];
+			t.outValid[c] = s.outValid[c];
+			t.source[c] = s.source[c];
+			t.game[c] = s.game[c];
+			t.ply[c] = s.ply[c];
+			t.toEnd[c] = s.toEnd[c];
+			if (s.shift == FLAT_SHIFT) {
+				t.value[c] = newValue;
+				t.valValid[c] = newValValid;
+			} else {
+				final int from = c << s.shift, to = from + s.rows(c);
+				t.value[c] = Arrays.copyOfRange(newValue, from, to);
+				t.valValid[c] = Arrays.copyOfRange(newValValid, from, to);
+			}
+		}
 		return new NnueDataset(checked(t));
 	}
 

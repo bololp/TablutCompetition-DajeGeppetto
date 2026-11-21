@@ -37,17 +37,22 @@ public final class NnueRelabel {
 		}
 		final Negamax nm = new Negamax(ev, depth, true, 1 << 18, true, Negamax.ORDER_RECOMMENDED, 1);
 		nm.setSafetyMarginMillis(0);
-		final float[] value = d.value.clone();
-		final byte[] valValid = d.valValid.clone();
+		final float[] value = new float[d.n]; // copie di lavoro delle due sole colonne che cambiano (con le pagine non esiste un array unico da clonare)
+		final byte[] valValid = new byte[d.n];
+		for (int i = 0; i < d.n; i++) {
+			value[i] = d.value(i);
+			valValid[i] = d.valValid(i);
+		}
 		final long t0 = System.currentTimeMillis();
 		int done = 0, failed = 0;
 		final byte[] board = new byte[81];
 		for (int i = 0; i < d.n; i++) {
-			if (onlyMissing && d.valValid[i] == 1) {
+			if (onlyMissing && d.valValid(i) == 1) {
 				continue;
 			}
-			System.arraycopy(d.boards, 81 * i, board, 0, 81);
-			final State s = NnueDataImport.toState(board, d.role[i]);
+			d.copyBoard(i, board, 0);
+			final byte role = d.role(i);
+			final State s = NnueDataImport.toState(board, role);
 			final Action move = nm.findBestMove(s, 1_000_000_000L, PositionHistory.empty());
 			if (move == null) {
 				failed++; // nessuna mossa: la posizione non e' valutabile con la ricerca
@@ -55,7 +60,7 @@ public final class NnueRelabel {
 				valValid[i] = 0;
 				continue;
 			}
-			value[i] = (float) NnueSelfPlay.scoreToValue(nm.lastScore, d.role[i] == 0, scale);
+			value[i] = (float) NnueSelfPlay.scoreToValue(nm.lastScore, role == 0, scale);
 			valValid[i] = 1;
 			done++;
 			if (log != null && done % 500 == 0) {
@@ -65,7 +70,7 @@ public final class NnueRelabel {
 		if (log != null) {
 			log.println("rietichettate " + done + " posizioni a profondita' " + depth + (failed > 0 ? ", " + failed + " senza mosse (lasciate senza valore)" : ""));
 		}
-		return new NnueDataset(d.boards, d.role, d.outcome, d.outValid, value, valValid, d.game, d.ply, d.toEnd, d.source);
+		return d.withValues(value, valValid); // le altre colonne sono condivise con d, non copiate
 	}
 
 	public static void main(String[] args) throws IOException {
