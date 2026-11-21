@@ -16,6 +16,7 @@ import it.unibo.ai.didattica.competition.tablut.aiplayer.MoveSearcher;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.Negamax;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.NegamaxSearcher;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.OrderingSpec;
+import it.unibo.ai.didattica.competition.tablut.aiplayer.PruningOptions;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.TranspositionTable;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.SimpleEvaluator;
 import it.unibo.ai.didattica.competition.tablut.domain.Action;
@@ -124,6 +125,12 @@ public class TablutNegamaxClient extends TablutClient {
 	 */
 	static MoveSearcher buildSearcher(String algo, String mctsSpec, Evaluator evaluator, int threads, long margin, int order, int ttLog2, boolean twoSlot,
 			boolean exactKeys) {
+		return buildSearcher(algo, mctsSpec, evaluator, threads, margin, order, ttLog2, twoSlot, exactKeys, PruningOptions.OFF);
+	}
+
+	/** Come sopra con le tecniche di riduzione dell'albero ({@code prune=}); con {@link PruningOptions#OFF} e' la ricerca storica. Solo per il Negamax. */
+	static MoveSearcher buildSearcher(String algo, String mctsSpec, Evaluator evaluator, int threads, long margin, int order, int ttLog2, boolean twoSlot,
+			boolean exactKeys, PruningOptions pruning) {
 		if (normalizeAlgo(algo).equals("mcts")) {
 			final MctsConfig cfg = MctsConfig.parse(mctsSpec);
 			if (cfg.maxNodes == 0) {
@@ -133,7 +140,7 @@ public class TablutNegamaxClient extends TablutClient {
 		}
 		final TranspositionTable table = exactKeys ? new ExactTranspositionTable(1 << ttLog2, twoSlot) : null;
 		return new NegamaxSearcher(new Negamax(evaluator, 40, true, 1 << ttLog2, true, order, threads, twoSlot, table).setThreads(threads)
-				.setSafetyMarginMillis(margin));
+				.setSafetyMarginMillis(margin).setPruning(pruning));
 	}
 
 	static boolean isKnownEvalBackend(String name) {
@@ -313,6 +320,7 @@ public class TablutNegamaxClient extends TablutClient {
 		String algo = System.getProperty("tablut.algo", "negamax");
 		String mctsSpec = "";
 		String evalBackend = "auto";
+		PruningOptions pruning = PruningOptions.OFF; // null-move / LMR / aspirazione: opt-in con prune=..., spente di default
 		for (int i = 3; i < args.length; i++) {
 			final String low = args[i].toLowerCase();
 			try {
@@ -333,6 +341,8 @@ public class TablutNegamaxClient extends TablutClient {
 				} else if (low.startsWith("margin=")) {
 					margin = Math.max(0, Long.parseLong(args[i].substring("margin=".length()).trim()));
 					marginGiven = true;
+				} else if (low.startsWith("prune=")) {
+					pruning = PruningOptions.parse(args[i].substring("prune=".length()).trim()); // lancia se non valida: allora resta quella di prima
 				} else if (low.startsWith("algo=")) {
 					algo = normalizeAlgo(args[i].substring("algo=".length())); // lancia se sconosciuto: l'algoritmo resta quello di prima
 				} else if (low.startsWith("eval=")) {
@@ -359,6 +369,10 @@ public class TablutNegamaxClient extends TablutClient {
 		}
 		if (!mctsSpec.isEmpty() && !algo.equals("mcts")) {
 			System.out.println("ATTENZIONE: 'mcts=' ignorato perche' l'algoritmo e' " + algo + " (aggiungi algo=mcts).");
+		}
+		if (pruning.any() && algo.equals("mcts")) {
+			System.out.println("ATTENZIONE: 'prune=' ignorato perche' l'algoritmo e' mcts (riguarda solo il negamax).");
+			pruning = PruningOptions.OFF;
 		}
 		if (exactKey && algo.equals("mcts")) {
 			System.out.println("ATTENZIONE: 'exactkey=' ignorato perche' l'MCTS non ha una transposition table.");
@@ -394,7 +408,7 @@ public class TablutNegamaxClient extends TablutClient {
 				: "disattivata";
 
 		// la ricerca si costruisce PRIMA del banner: cosi' il banner descrive la TT effettivamente creata
-		final MoveSearcher searcher = buildSearcher(algo, mctsSpec, evaluator, threads, margin, order, ttLog2, twoSlot, exactKey);
+		final MoveSearcher searcher = buildSearcher(algo, mctsSpec, evaluator, threads, margin, order, ttLog2, twoSlot, exactKey, pruning);
 		final boolean exactTt = searcher instanceof NegamaxSearcher
 				&& ((NegamaxSearcher) searcher).negamax().transpositionTable() instanceof ExactTranspositionTable;
 
@@ -408,7 +422,7 @@ public class TablutNegamaxClient extends TablutClient {
 			System.out.println("Negamax client - ruolo: " + role + " - timeout: " + timeout + "s - server: " + ipAddress
 					+ " - thread di ricerca: " + threads + " - ordinamento: " + orderName + " (modo " + order + ") - TT: 2^" + ttLog2 + " voci ("
 					+ ttBytes(ttLog2, exactTt) / (1 << 20) + " MB, " + (twoSlot ? "due slot" : "slot singolo") + (exactTt ? ", chiave esatta" : ", hash") + ") - cache valutazioni: " + evCacheDesc
-					+ " - margine: " + margin + " ms");
+					+ " - margine: " + margin + " ms" + (pruning.any() ? " - potatura: " + pruning : ""));
 		}
 
 		TablutNegamaxClient client = new TablutNegamaxClient(role, algo, timeout, ipAddress, searcher);
@@ -422,12 +436,7 @@ public class TablutNegamaxClient extends TablutClient {
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
-		System.out.println(" ___        _        ___                    _   _       \n" + //
-						"|   \\ __ _ (_)___   / __|___ _ __ _ __  ___| |_| |_ ___ \n" + //
-						"| |) / _` || / -_) | (_ / -_) '_ \\ '_ \\/ -_)  _|  _/ _ \\\n" + //
-						"|___/\\__,_|/ \\___|  \\___\\___| .__/ .__/\\___|\\__|\\__\\___/\n" + //
-						"         |__/               |_|  |_|                    \n" + //
-						"");
+
 		System.out.println("Sono il giocatore " + this.getPlayer().toString() + "!");
 
 		while (true) {

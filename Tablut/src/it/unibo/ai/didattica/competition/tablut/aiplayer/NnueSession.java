@@ -55,6 +55,8 @@ public final class NnueSession implements IncrementalEvaluator.Session {
 	private long[] sig;
 	private byte[] state;
 	private byte[] mvPiece, mvFrom, mvTo, capN;
+	/** 1 se il frame {@code p} e' una mossa NULLA (stessa scacchiera del genitore): nessuna differenza, l'accumulatore e' una copia. */
+	private byte[] nullFrame;
 	private byte[] capSq, capPc; // MAX_CAP per frame
 
 	private long deltaSteps;
@@ -86,6 +88,7 @@ public final class NnueSession implements IncrementalEvaluator.Session {
 		mvFrom = mvFrom == null ? new byte[n] : Arrays.copyOf(mvFrom, n);
 		mvTo = mvTo == null ? new byte[n] : Arrays.copyOf(mvTo, n);
 		capN = capN == null ? new byte[n] : Arrays.copyOf(capN, n);
+		nullFrame = nullFrame == null ? new byte[n] : Arrays.copyOf(nullFrame, n);
 		capSq = capSq == null ? new byte[n * MAX_CAP] : Arrays.copyOf(capSq, n * MAX_CAP);
 		capPc = capPc == null ? new byte[n * MAX_CAP] : Arrays.copyOf(capPc, n * MAX_CAP);
 		cap = n;
@@ -105,6 +108,7 @@ public final class NnueSession implements IncrementalEvaluator.Session {
 		if (ply >= cap) {
 			allocate(Math.max(ply + 1, cap * 2));
 		}
+		nullFrame[ply] = 0;
 		final int from = move & 127;
 		final int to = move >>> 7;
 		boolean usable = from < NnueNetwork.NUM_SQUARES && to < NnueNetwork.NUM_SQUARES;
@@ -134,6 +138,24 @@ public final class NnueSession implements IncrementalEvaluator.Session {
 		mvTo[ply] = (byte) to;
 		capN[ply] = (byte) n;
 		state[ply] = PENDING;
+	}
+
+	/**
+	 * Mossa nulla: il frame {@code ply} e' una copia di quello del genitore (stessa scacchiera, stesse feature, stessa firma). La testa di
+	 * valutazione dipende dal turno e si sceglie in {@link #evaluate} dal {@code FastState}: dopo la mossa nulla e' quella dell'altro lato.
+	 * La copia avviene in modo lazy (solo se il frame, o un suo discendente, viene valutato), come ogni altra differenza.
+	 */
+	@Override
+	public boolean pushNull(int ply, FastState after) {
+		if (ply < 1) {
+			throw new IllegalArgumentException("pushNull: il ply del figlio e' >= 1 (0 e' la radice, si installa con reset)");
+		}
+		if (ply >= cap) {
+			allocate(Math.max(ply + 1, cap * 2));
+		}
+		nullFrame[ply] = 1;
+		state[ply] = PENDING;
+		return true;
 	}
 
 	@Override
@@ -173,6 +195,13 @@ public final class NnueSession implements IncrementalEvaluator.Session {
 	}
 
 	private void applyDelta(int j) {
+		if (nullFrame[j] != 0) {
+			System.arraycopy(acc[j - 1], 0, acc[j], 0, acc[j].length);
+			sig[j] = sig[j - 1];
+			state[j] = COMPUTED;
+			deltaSteps++;
+			return;
+		}
 		final int base = NnueNetwork.baseOf(mvPiece[j]);
 		final int fromF = base + mvFrom[j];
 		final int toF = base + mvTo[j];

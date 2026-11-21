@@ -356,6 +356,37 @@ public class Negamax {
 	private long pvsScouts;
 	private long pvsReSearches;
 
+	// ---- tecniche di riduzione dell'albero (null-move, LMR, finestre di aspirazione): tutte SPENTE nel default, si veda PruningOptions ----
+	/** Configurazione corrente (immutabile); gli helper Lazy SMP la ricevono a ogni ricerca. */
+	private PruningOptions pruning = PruningOptions.OFF;
+	/**
+	 * Vero se in QUESTA ricerca le tecniche sono sospese: la ricerca precedente ha trovato una vittoria o una sconfitta FORZATA, e finche'
+	 * e' cosi' si cerca senza riduzioni (l'algoritmo storico, che ritrova sempre la vittoria piu' breve): e' cio' che mantiene valida la garanzia
+	 * "la distanza dalla vittoria scende di almeno 2 semi-mosse per turno" (si veda il javadoc di classe).
+	 */
+	private boolean pruningSuspended;
+	/** Il risultato dell'ultima ricerca di QUESTA istanza era una vittoria/sconfitta forzata: la prossima ricerca sospende le riduzioni. */
+	private boolean huntWin;
+	/** Tecniche effettivamente attive in questa ricerca (accese e non sospese); false nei test che chiamano {@link #negamax} direttamente. */
+	private boolean nullActive, lmrActive;
+	/** Il prossimo {@link #negamax} e' il figlio di una mossa nulla: non ne tenta un'altra (si consuma all'ingresso del nodo). */
+	private boolean skipNullNext;
+	/** Riduzione applicata dal genitore al figlio che sta per essere cercato (0 = nessuna): il figlio la consuma all'ingresso e la annulla se la mossa ha creato una minaccia. */
+	private int pendingReduction;
+	/** Durante la ricerca di verifica di una potatura nulla: nessuna mossa nulla nei nodi con {@code sp >= nullBanFromSp}. */
+	private int nullBanFromSp = Integer.MAX_VALUE;
+	/** Risultato dell'ultimo passaggio alla radice ({@link #rootPass}). */
+	private int passBest = Move.NONE;
+	private double passBestScore;
+	private boolean passFailHigh;
+	private long nullTries, nullCuts, nullVerifies, nullVerifyFails, lmrReductions, lmrReSearches, lmrCancelled, aspFailLow, aspFailHigh;
+	/** Statistiche dell'ultima ricerca di QUESTO worker (nodi del principale): tentativi / potature della mossa nulla, verifiche e verifiche fallite, mosse ridotte e ri-ricerche a profondita' piena, fail-low / fail-high della finestra di aspirazione. */
+	public long lastNullTries, lastNullCuts, lastNullVerifies, lastNullVerifyFails, lastLmrReductions, lastLmrReSearches, lastLmrCancelled, lastAspFailLow, lastAspFailHigh;
+	/** Le tecniche erano sospese nell'ultima ricerca (si veda {@link #pruningSuspended}). */
+	public boolean lastPruningSuspended;
+	/** Soglia del punteggio di ordinamento da cui una mossa (TT, vittoria, killer, countermove, cattura) non si riduce mai: la history sta sotto 2^26. */
+	private static final int SPECIAL_ORDER_SCORE = 1 << 27;
+
 	public Negamax(Evaluator evaluator) {
 		this(evaluator, 40);
 	}
@@ -448,6 +479,7 @@ public class Negamax {
 		this.tt = main.tt;
 		this.threads = 1;
 		this.isHelper = true;
+		this.pruning = main.pruning;
 		allocStacks(main.maxDepth + 3);
 	}
 
@@ -556,11 +588,13 @@ public class Negamax {
 		if (tt != null) {
 			tt.newSearch(); // nuova mossa di partita: le voci precedenti diventano "vecchie" (conta solo per la TT a due slot)
 		}
+		this.pruningSuspended = pruning.any() && huntWin;
 		final int nThreads = effectiveThreads();
 		if (nThreads <= 1) {
 			this.control = null;
 			this.deadline = dl;
 			int r = searchRoot(rootState, history, 0);
+			this.huntWin = r != Move.NONE && Math.abs(this.lastScore) >= WIN_SCORE;
 			this.lastTotalNodeCount = this.lastNodeCount;
 			this.lastThreadsUsed = 1;
 			this.lastHelperErrors = 0;
@@ -612,6 +646,7 @@ public class Negamax {
 		this.repetitionEventCounter = 0;
 		this.pvsScouts = 0;
 		this.pvsReSearches = 0;
+		this.nullTries = this.nullCuts = this.nullVerifies = this.nullVerifyFails = this.lmrReductions = this.lmrReSearches = this.lmrCancelled = this.aspFailLow = this.aspFailHigh = 0;
 		this.rootIterDepth = 0;
 		rollKillersForNewSearch();
 		for (int[] h : historyScore) {
@@ -672,11 +707,24 @@ public class Negamax {
 					this.lastScore = WIN_SCORE; // come una vittoria in 1 trovata dalla ricerca: WIN_SCORE + 0 (profondita' residua)
 					this.lastPvsScouts = 0;
 					this.lastPvsReSearches = 0;
+					this.lastNullTries = this.lastNullCuts = this.lastNullVerifies = this.lastNullVerifyFails = 0; // nessuna ricerca: niente dati stantii della precedente
+					this.lastLmrReductions = this.lastLmrReSearches = this.lastLmrCancelled = this.lastAspFailLow = this.lastAspFailHigh = 0;
+					this.lastPruningSuspended = pruningSuspended;
 					this.lastBestMove = winMove;
 					return winMove;
 				}
 			}
 		}
+
+		final double full = WIN_SCORE + maxDepth + 1; // semi-ampiezza della finestra PIENA della radice
+		// tecniche di riduzione (tutte spente nel default) attive in QUESTA ricerca
+		this.nullActive = pruning.nullMove && !pruningSuspended;
+		this.lmrActive = pruning.lmr && usePVS && !pruningSuspended;
+		final boolean aspActive = pruning.aspiration && !pruningSuspended;
+		this.nullBanFromSp = Integer.MAX_VALUE;
+		this.skipNullNext = false;
+		double prevScore = 0, prevPrevScore = 0;
+		boolean havePrev = false, havePrevPrev = false;
 
 		for (int depth = 1; depth <= maxDepth && !timeUp; depth++) {
 			if (workerId > 0 && skipDepth(workerId, depth)) {
@@ -687,44 +735,48 @@ public class Negamax {
 				orderMovesInPlace(rootMoves, nRoot, best);
 			}
 
-			int iterationBest = Move.NONE;
-			double iterationBestScore = Double.NEGATIVE_INFINITY;
-			double alpha = -WIN_SCORE - maxDepth - 1;
-			double beta = WIN_SCORE + maxDepth + 1;
-
-			boolean firstRootMove = true;
-			for (int mi = 0; mi < nRoot; mi++) {
-				if (checkTimeUp()) {
+			// Finestra di aspirazione: solo se accesa, a profondita' sufficiente e con un punteggio precedente euristico; altrimenti finestra
+			// PIENA come sempre. La semi-ampiezza parte da asp.delta o, se maggiore, dalla variazione osservata fra le due iterazioni precedenti
+			// (il punteggio NNUE oscilla molto, anche per la parita' della profondita'), e raddoppia a ogni insuccesso; al terzo, o se compare un
+			// punteggio di vittoria, il lato fallito si apre del tutto. Un risultato STRETTAMENTE dentro la finestra e' esatto: uguale a quello della
+			// finestra piena (con un fail-low/high i punteggi sono solo limiti e si ripete la ricerca: mai un valore da una finestra fallita).
+			double lo = -full, hi = full, delta = 0;
+			boolean windowed = false;
+			if (aspActive && depth >= pruning.aspMinDepth && havePrev && Math.abs(prevScore) < WIN_SCORE) {
+				delta = Math.max(pruning.aspDelta, havePrevPrev ? 0.75 * Math.abs(prevScore - prevPrevScore) : 0.0);
+				lo = Math.max(-full, prevScore - delta);
+				hi = Math.min(full, prevScore + delta);
+				windowed = true;
+			}
+			int failLow = 0, failHigh = 0;
+			while (true) {
+				rootPass(depth, nRoot, rootMoves, mySign, lo, hi);
+				if (timeUp || !windowed) {
 					break;
 				}
-				final int a = rootMoves[mi];
-				double score;
-				if (usePVS && !firstRootMove && alpha + PVS_EPSILON < beta) {
-					// PVS: scout a finestra nulla; ri-ricerca a finestra piena solo se la mossa sembra migliorare
-					pvsScouts++;
-					score = -exploreChild(a, depth - 1, -(alpha + PVS_EPSILON), -alpha, -mySign, 0);
-					if (!timeUp && score > alpha && score < beta) {
-						pvsReSearches++;
-						score = -exploreChild(a, depth - 1, -beta, -alpha, -mySign, 0);
-					}
+				if (passBestScore <= lo) { // nessuna mossa supera lo: finestra troppo alta
+					aspFailLow++;
+					lo = (++failLow >= 3 || Math.abs(passBestScore) >= WIN_SCORE) ? -full : Math.max(-full, passBestScore - delta);
+					delta *= 2;
+				} else if (passFailHigh) { // una mossa raggiunge hi: finestra troppo bassa
+					aspFailHigh++;
+					hi = (++failHigh >= 3 || Math.abs(passBestScore) >= WIN_SCORE) ? full : Math.min(full, passBestScore + delta);
+					delta *= 2;
 				} else {
-					score = -exploreChild(a, depth - 1, -beta, -alpha, -mySign, 0);
-				}
-				firstRootMove = false;
-				rootScores[mi] = score;
-				if (score > iterationBestScore) {
-					iterationBestScore = score;
-					iterationBest = a;
-				}
-				if (score > alpha) {
-					alpha = score;
+					break; // lo < valore < hi: valore esatto
 				}
 			}
+			final int iterationBest = passBest;
+			final double iterationBestScore = passBestScore;
 
 			if (!timeUp && iterationBest != Move.NONE) {
 				best = iterationBest;
 				bestScore = iterationBestScore;
 				depthReached = depth;
+				prevPrevScore = prevScore;
+				havePrevPrev = havePrev;
+				prevScore = iterationBestScore;
+				havePrev = true;
 				if (rootByScores) {
 					sortRootByScores(rootMoves, rootScores, nRoot, best);
 				}
@@ -740,8 +792,64 @@ public class Negamax {
 		this.lastScore = bestScore;
 		this.lastPvsScouts = pvsScouts;
 		this.lastPvsReSearches = pvsReSearches;
+		this.lastNullTries = nullTries;
+		this.lastNullCuts = nullCuts;
+		this.lastNullVerifies = nullVerifies;
+		this.lastNullVerifyFails = nullVerifyFails;
+		this.lastLmrReductions = lmrReductions;
+		this.lastLmrReSearches = lmrReSearches;
+		this.lastLmrCancelled = lmrCancelled;
+		this.lastAspFailLow = aspFailLow;
+		this.lastAspFailHigh = aspFailHigh;
+		this.lastPruningSuspended = pruningSuspended;
 		this.lastBestMove = best;
 		return best;
+	}
+
+	/**
+	 * Un passaggio sulle mosse della radice con la finestra ({@code lo}, {@code hi}); risultati in {@link #passBest}, {@link #passBestScore},
+	 * {@link #passFailHigh}. Con la finestra PIENA e' esattamente il ciclo storico (nessun punteggio puo' raggiungere {@code hi}: il taglio
+	 * {@code score >= beta} non scatta mai). Con una finestra stretta il primo punteggio {@code >= hi} interrompe il passaggio (fail-high): non si
+	 * puo' proseguire con alpha >= beta, e il risultato e' comunque solo un limite inferiore che il chiamante ripete a finestra piu' larga.
+	 */
+	private void rootPass(int depth, int nRoot, int[] rootMoves, int mySign, double lo, double hi) {
+		passBest = Move.NONE;
+		passBestScore = Double.NEGATIVE_INFINITY;
+		passFailHigh = false;
+		double alpha = lo;
+		final double beta = hi;
+		boolean firstRootMove = true;
+		for (int mi = 0; mi < nRoot; mi++) {
+			if (checkTimeUp()) {
+				break;
+			}
+			final int a = rootMoves[mi];
+			double score;
+			if (usePVS && !firstRootMove && alpha + PVS_EPSILON < beta) {
+				// PVS: scout a finestra nulla; ri-ricerca a finestra piena solo se la mossa sembra migliorare
+				pvsScouts++;
+				score = -exploreChild(a, depth - 1, -(alpha + PVS_EPSILON), -alpha, -mySign, 0);
+				if (!timeUp && score > alpha && score < beta) {
+					pvsReSearches++;
+					score = -exploreChild(a, depth - 1, -beta, -alpha, -mySign, 0);
+				}
+			} else {
+				score = -exploreChild(a, depth - 1, -beta, -alpha, -mySign, 0);
+			}
+			firstRootMove = false;
+			rootScores[mi] = score;
+			if (score > passBestScore) {
+				passBestScore = score;
+				passBest = a;
+			}
+			if (score > alpha) {
+				alpha = score;
+			}
+			if (score >= beta) {
+				passFailHigh = true;
+				break;
+			}
+		}
 	}
 
 	/** Riporta una valutazione statica nell'intervallo {@code [-EVAL_LIMIT, EVAL_LIMIT]}; {@code NaN} diventa 0. Nessuna allocazione. */
@@ -750,6 +858,44 @@ public class Negamax {
 			return 0; // NaN
 		}
 		return e > EVAL_LIMIT ? EVAL_LIMIT : (e < -EVAL_LIMIT ? -EVAL_LIMIT : e);
+	}
+
+	/** Pezzi del lato al tratto (Re escluso: {@code whiteCount} non lo conta, qui lo si somma per il Bianco). */
+	private static int ownPieces(FastState s) {
+		return s.turn == BoardConstants.WHITE_TURN ? s.whiteCount + 1 : s.blackCount;
+	}
+
+	/**
+	 * Posizione "forzante": c'e' una minaccia immediata che mossa nulla e riduzioni non devono ignorare (l'analogo dello scacco). SOVRASTIMA apposta:
+	 * un falso positivo significa solo una potatura in meno. Col Nero al tratto: il Re ha una via di celle vuote fino al bordo in almeno una direzione
+	 * (il Bianco minaccia la fuga). Col Bianco al tratto: una pedina nera e' adiacente al Re (il Nero minaccia la cattura). Nessuna allocazione.
+	 */
+	private static boolean forcing(FastState s) {
+		final int k = s.kingSquare;
+		if (k < 0) {
+			return false;
+		}
+		final byte[] b = s.board;
+		if (s.turn == BoardConstants.BLACK_TURN) {
+			for (int d = 0; d < BoardConstants.NUM_DIRS; d++) {
+				final int steps = BoardConstants.STEPS[d][k];
+				final int off = BoardConstants.DIR_OFFSET[d];
+				boolean clear = steps > 0;
+				for (int i = 1; clear && i <= steps; i++) {
+					clear = b[k + i * off] == BoardConstants.EMPTY;
+				}
+				if (clear) {
+					return true;
+				}
+			}
+			return false;
+		}
+		for (int d = 0; d < BoardConstants.NUM_DIRS; d++) {
+			if (BoardConstants.STEPS[d][k] > 0 && b[k + BoardConstants.DIR_OFFSET[d]] == BoardConstants.BLACK) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	// ------------------------------------------------------------------------------------------ ricorsione
@@ -833,6 +979,10 @@ public class Negamax {
 	// package-private per lo stesso motivo di exploreChild, si veda sopra.
 	double negamax(int depth, double alpha, double beta, int perspective, int sp) {
 		nodeCounter++;
+		final boolean skipNullHere = skipNullNext; // figlio di una mossa nulla: non ne tenta un'altra (si consuma qui, prima di ogni uscita)
+		skipNullNext = false;
+		final int incomingReduction = pendingReduction; // riduzione applicata dal genitore a questo figlio (si consuma qui, prima di ogni uscita)
+		pendingReduction = 0;
 		if ((nodeCounter & (TIME_CHECK_INTERVAL - 1)) == 0 && checkTimeUp()) {
 			return 0; // valore ignorato dal chiamante: appena timeUp==true, la iterazione corrente viene scartata
 		}
@@ -847,6 +997,12 @@ public class Negamax {
 				return perspective * (-(WIN_SCORE + depth));
 			}
 			return 0; // pareggio
+		}
+		// Una mossa tranquilla puo' CREARE una minaccia (p.es. un pezzo che apre una linea al Re): se il figlio ridotto e' una posizione forzante, la
+		// riduzione si annulla e si cerca a profondita' piena (analogo dell'estensione di scacco). Il resto del nodo usa gia' la profondita' corretta.
+		if (incomingReduction > 0 && forcing(s)) {
+			depth += incomingReduction;
+			lmrCancelled++;
 		}
 
 		double alphaOriginal = alpha;
@@ -889,7 +1045,7 @@ public class Negamax {
 		}
 
 		final int[] moves = moveStack[sp];
-		final int nMoves = s.generateMoves(moves);
+		int nMoves = s.generateMoves(moves);
 		if (nMoves == 0) {
 			// Chi deve muovere non ha mosse legali: perde immediatamente. Questo
 			// valore NON dipende in alcun modo dalla storia del percorso (e'
@@ -903,9 +1059,65 @@ public class Negamax {
 			return result;
 		}
 
+		// ------------------------------------------------------------------------------------ potatura con mossa nulla
+		// (spenta nel default). Si tenta solo dove e' sicuro: nodo senza finestra di vittoria, a finestra nulla (non-PV), profondita' sufficiente
+		// perche' il figlio nullo veda ancora le vittorie immediate dell'avversario (profondita' >= 1), almeno 3 mosse legali (nodo con
+		// "nessuna mossa" gia' trattato sopra), abbastanza pezzi (zugzwang) e posizione non forzante. Vale solo se la valutazione statica e'
+		// gia' >= beta. Il risultato della ricerca nulla NON entra mai nella TT, il nodo NON memorizza nulla se taglia, la storia di
+		// ripetizione non viene toccata (il figlio nullo non e' una posizione vera: non si registra ne' si confronta). Un punteggio di
+		// vittoria/sconfitta dalla ricerca nulla non e' una prova (la mossa nulla non e' una mossa): non taglia mai.
+		if (nullActive && !skipNullHere && sp < nullBanFromSp && depth >= pruning.nullMinDepth && nMoves >= 3 && beta - alpha <= 2 * PVS_EPSILON
+				&& alpha > -WIN_SCORE && beta < WIN_SCORE && ownPieces(s) >= pruning.nullMinPieces && !forcing(s)) {
+			final double staticEval = perspective * clampEval(inc != null ? inc.evaluate(sp, s) : evaluator.evaluate(s));
+			if (staticEval >= beta) {
+				final int r = pruning.nullR;
+				final UndoInfo nu = undoStack[sp];
+				final long repBefore = repetitionEventCounter;
+				s.makeNullMove(nu);
+				if (inc == null || inc.pushNull(sp + 1, s)) {
+					nullTries++;
+					prevMoveAt[sp + 1] = -1;
+					skipNullNext = true;
+					final double v = -negamax(depth - 1 - r, -beta, -beta + PVS_EPSILON, -perspective, sp + 1);
+					skipNullNext = false;
+					s.unmakeNullMove(nu);
+					if (timeUp) {
+						return 0; // valore ignorato dal chiamante (iterazione scartata); la posizione e' gia' ripristinata
+					}
+					boolean cut = v >= beta && Math.abs(v) < WIN_SCORE;
+					if (cut && pruning.nullVerifyDepth > 0 && depth >= pruning.nullVerifyDepth) {
+						// verifica: stessa posizione, profondita' ridotta, NESSUNA mossa nulla in questo sottoalbero; taglia solo se conferma
+						nullVerifies++;
+						final int savedBan = nullBanFromSp;
+						nullBanFromSp = sp;
+						final double vv = negamax(depth - r, beta - PVS_EPSILON, beta, perspective, sp);
+						nullBanFromSp = savedBan;
+						if (timeUp) {
+							return 0;
+						}
+						cut = vv >= beta;
+						if (!cut) {
+							nullVerifyFails++;
+						}
+						nMoves = s.generateMoves(moves); // la verifica ha riusato (e puo' aver riordinato) il buffer di questo ply
+					}
+					if (cut) {
+						nullCuts++;
+						return beta; // limite inferiore: NON si memorizza in TT (si veda sopra)
+					}
+					// nessun taglio: il sottoalbero nullo non fa parte del valore di questo nodo, quindi le sue ripetizioni non devono bloccare la TT dei genitori
+					repetitionEventCounter = repBefore;
+				} else {
+					s.unmakeNullMove(nu); // la sessione di valutazione non supporta la mossa nulla: niente potatura
+				}
+			}
+		}
+
 		final int[] orderScore;
 		final int sideIdx = (s.turn == BoardConstants.WHITE_TURN) ? 0 : 1;
-		final int ply = Math.max(0, Math.min(killers.length - 1, rootIterDepth - depth));
+		// Con le riduzioni accese la profondita' residua non e' piu' (profondita' dell'iterazione - ply): l'indice di killer/history e' il ply vero.
+		// Senza riduzioni le due espressioni coincidono (e il codice storico e' quello di prima, anche per i test che chiamano negamax a mano).
+		final int ply = (nullActive || lmrActive) ? Math.min(killers.length - 1, sp) : Math.max(0, Math.min(killers.length - 1, rootIterDepth - depth));
 		if (orderingMode != ORDER_NONE) {
 			orderScore = scoreStack[sp];
 			if ((orderingMode & ORDER_EXT_MASK) != 0) {
@@ -923,19 +1135,58 @@ public class Negamax {
 		double best = Double.NEGATIVE_INFINITY;
 		int bestMoveFound = Move.NONE;
 		boolean firstMove = true;
+		int forcingState = -1; // -1 non calcolato, 0 no, 1 si': posizione forzante (calcolata al piu' una volta per nodo e solo se serve)
 		for (int mi = 0; mi < nMoves; mi++) {
 			if (orderScore != null) {
 				selectBest(moves, orderScore, mi, nMoves); // selezione pigra: la migliore tra le rimaste va in posizione mi
 			}
 			final int a = moves[mi];
 			double score;
+			// Riduzione delle mosse tardive (LMR, spenta nel default): candidata per OGNI mossa che non sia la prima, sia nei nodi PV (scout) sia nei nodi
+			// non-PV (finestra gia' nulla), dove sta il grosso dell'albero. Mai ridotte: le prime lmr.moves mosse; mosse con punteggio di ordinamento
+			// speciale (TT, vittoria, killer, countermove, catture); catture/vittorie vere; mosse del Re; nodi forzanti; nodi con una finestra di
+			// vittoria. Il figlio ridotto ha sempre profondita' >= 1 (vede ancora le vittorie immediate avversarie).
+			int red = 0;
+			if (lmrActive && !firstMove && depth >= pruning.lmrMinDepth && mi >= pruning.lmrMinMoves && alpha > -WIN_SCORE && beta < WIN_SCORE
+					&& (orderScore == null || orderScore[mi] < SPECIAL_ORDER_SCORE)) {
+				if (forcingState < 0) {
+					forcingState = forcing(s) ? 1 : 0;
+				}
+				if (forcingState == 0 && s.board[Move.getFrom(a)] != BoardConstants.KING && s.tacticalValue(a) == 0) {
+					red = (depth >= 6 && mi >= 2 * pruning.lmrMinMoves) ? 2 : 1;
+					red = Math.min(red, depth - 2);
+				}
+			}
 			if (usePVS && !firstMove && alpha + PVS_EPSILON < beta) {
 				// scout a finestra nulla (-alpha-eps,-alpha); se la finestra residua e' piu' stretta di eps si cerca normalmente
 				pvsScouts++;
-				score = -exploreChild(a, depth - 1, -(alpha + PVS_EPSILON), -alpha, -perspective, sp);
+				if (red > 0) {
+					lmrReductions++;
+					pendingReduction = red;
+					score = -exploreChild(a, depth - 1 - red, -(alpha + PVS_EPSILON), -alpha, -perspective, sp);
+					pendingReduction = 0; // exploreChild puo' uscire senza entrare nel figlio (ripetizione): il flag non deve restare acceso
+					// Se la mossa sembra migliorare, o se il risultato e' una vittoria/sconfitta (la cui profondita' residua, ridotta, non e'
+					// coerente), si ripete a profondita' PIENA: nessun punteggio di vittoria entra mai in un nodo da una ricerca ridotta.
+					if (!timeUp && (score > alpha || Math.abs(score) >= WIN_SCORE)) {
+						lmrReSearches++;
+						score = -exploreChild(a, depth - 1, -(alpha + PVS_EPSILON), -alpha, -perspective, sp);
+					}
+				} else {
+					score = -exploreChild(a, depth - 1, -(alpha + PVS_EPSILON), -alpha, -perspective, sp);
+				}
 				if (!timeUp && score > alpha && score < beta) {
 					// la mossa migliora il meglio trovato finora: ora serve il valore ESATTO
 					pvsReSearches++;
+					score = -exploreChild(a, depth - 1, -beta, -alpha, -perspective, sp);
+				}
+			} else if (red > 0) {
+				// nodo non-PV (finestra gia' nulla): stessa finestra, profondita' ridotta; si ripete a profondita' piena con le stesse regole
+				lmrReductions++;
+				pendingReduction = red;
+				score = -exploreChild(a, depth - 1 - red, -beta, -alpha, -perspective, sp);
+				pendingReduction = 0;
+				if (!timeUp && (score > alpha || Math.abs(score) >= WIN_SCORE)) {
+					lmrReSearches++;
 					score = -exploreChild(a, depth - 1, -beta, -alpha, -perspective, sp);
 				}
 			} else {
@@ -1264,6 +1515,35 @@ public class Negamax {
 	}
 
 	/** Hook di test: lunghezza corrente della storia di ripetizione (deve tornare al valore iniziale dopo ogni chiamata). */
+	/** Test: accende/spegne direttamente la mossa nulla e l'LMR per chiamate dirette a {@link #negamax} (senza passare da findBestMove). */
+	void setPruningActiveForTest(boolean nmp, boolean lmrOn) {
+		this.nullActive = nmp;
+		this.lmrActive = lmrOn && usePVS;
+		this.pruningSuspended = false;
+		this.nullBanFromSp = Integer.MAX_VALUE;
+		this.skipNullNext = false;
+	}
+
+	/** Test: configurazione di potatura ricevuta dall'helper {@code i} (null se non esiste). */
+	PruningOptions helperPruningForTest(int i) {
+		return helpers == null || i < 0 || i >= helpers.length || helpers[i] == null ? null : helpers[i].pruning;
+	}
+
+	/** Test: contatori correnti {tentativi nulli, tagli nulli, verifiche, verifiche fallite, riduzioni, ri-ricerche, riduzioni annullate}. */
+	long[] pruningCountersForTest() {
+		return new long[] { nullTries, nullCuts, nullVerifies, nullVerifyFails, lmrReductions, lmrReSearches, lmrCancelled };
+	}
+
+	/** Test: la funzione di sicurezza {@link #forcing}. */
+	static boolean forcingForTest(FastState s) {
+		return forcing(s);
+	}
+
+	/** Test: le tecniche erano sospese per la ricerca in corso/ultima (vittoria forzata precedente). */
+	boolean pruningSuspendedForTest() {
+		return pruningSuspended;
+	}
+
 	int historyLengthForTest() {
 		return histLen;
 	}
@@ -1334,6 +1614,28 @@ public class Negamax {
 			threads = v;
 		}
 		return this;
+	}
+
+	/**
+	 * Imposta le tecniche di riduzione dell'albero ({@link PruningOptions}); {@code null} = {@link PruningOptions#OFF}. Va chiamato a ricerca ferma.
+	 * Con {@code OFF} la ricerca e' identica a quella storica. Ritorna {@code this}.
+	 */
+	public Negamax setPruning(PruningOptions p) {
+		this.pruning = p == null ? PruningOptions.OFF : p;
+		this.huntWin = false;
+		final Negamax[] hs = helpers;
+		if (hs != null) {
+			for (Negamax h : hs) {
+				if (h != null) {
+					h.pruning = this.pruning;
+				}
+			}
+		}
+		return this;
+	}
+
+	public PruningOptions getPruning() {
+		return pruning;
 	}
 
 	/** Thread effettivi: la condivisione avviene solo tramite la TT, quindi senza TT (o per un helper) si cerca a thread singolo. */
@@ -1418,6 +1720,8 @@ public class Negamax {
 			h.control = ctl;
 			h.deadline = dl;
 			h.helperError = null;
+			h.pruning = pruning;
+			h.pruningSuspended = pruningSuspended;
 			final FastState rootCopy = rootState.duplicate();
 			final PositionHistory historyCopy = history.copy();
 			final int workerId = i + 1;
@@ -1483,6 +1787,7 @@ public class Negamax {
 			this.lastScore = h.lastScore;
 			this.lastAdoptedWorker = adopt + 1;
 		}
+		this.huntWin = best != Move.NONE && Math.abs(this.lastScore) >= WIN_SCORE;
 		this.lastBestMove = best;
 		this.lastTotalNodeCount = totalNodes;
 		this.lastThreadsUsed = 1 + startedCount;

@@ -436,6 +436,45 @@ public class TablutGeneticClientCheck {
 		System.out.println("   " + tag + ": " + s.clientMoves + " mosse legali, latenze (ms) " + s.latencies + ", uscita " + s.exitCode);
 	}
 
+	/** Costruzione del searcher come nel client reale: {@code prune=} spenta di default, accesa solo se richiesta; sessione del protocollo con opzione valida e non valida. */
+	static void pruneOption(NnueNetwork net) throws Exception {
+		final MoveSearcher def = TablutNegamaxClient.buildSearcher("negamax", null, new NnueEvaluator(net), 1, 300, Negamax.ORDER_RECOMMENDED, 16, false, true);
+		check(def instanceof it.unibo.ai.didattica.competition.tablut.aiplayer.NegamaxSearcher, "buildSearcher di default: negamax");
+		final MoveSearcher on = TablutNegamaxClient.buildSearcher("negamax", null, new NnueEvaluator(net), 1, 300, Negamax.ORDER_RECOMMENDED, 16, false, true,
+				it.unibo.ai.didattica.competition.tablut.aiplayer.PruningOptions.parse("nmp,lmr"));
+		check(on != null, "buildSearcher con potatura: costruito");
+		// la ricerca con potatura gioca mosse legali dalle posizioni di prova, a profondita' fissa e con budget di tempo
+		int ok = 0;
+		for (State s : positions(61, 9, 3)) {
+			final FastState fs = FastState.fromState(s);
+			final PositionHistory h = new PositionHistory();
+			h.add(fs);
+			final int mv = on.findBestMove(fs, 700, h);
+			ok += mv != Move.NONE && isLegal(s, Move.toAction(mv, s.getTurn())) ? 1 : 0;
+		}
+		check(ok == 3, "ricerca con prune=nmp,lmr dal builder del client: mosse legali (" + ok + "/3)");
+	}
+
+	static void protocolPrune(Turn role, int timeout, int moves, String pruneArg, boolean valid) throws Exception {
+		final String tag = role + " prune=" + pruneArg;
+		final Session s = playSession(role, timeout, moves, "genome=" + genomeFile.getPath(), "base=" + baseFile.getPath(), "threads=1", "tt=16", "margin=1000", "prune=" + pruneArg);
+		check(s.serverError == null, tag + ": errore nel finto server: " + s.serverError);
+		check(s.clientMoves == moves && s.illegal == 0, tag + ": " + s.clientMoves + " risposte, " + s.illegal + " illegali");
+		long worst = 0;
+		for (long l : s.latencies) {
+			worst = Math.max(worst, l);
+		}
+		check(worst <= timeout * 1000L, tag + ": risposta piu' lenta " + worst + " ms > timeout " + timeout * 1000 + " ms");
+		check(s.exitCode != null && s.exitCode == 0, tag + ": codice di uscita 0 (" + s.exitCode + ")");
+		if (valid) {
+			check(s.output.contains("potatura: nmp"), tag + ": il banner dichiara la potatura accesa");
+		} else {
+			check(!s.output.contains("potatura:"), tag + ": con un'opzione non valida la ricerca resta quella storica (nessuna potatura nel banner)");
+			check(s.output.contains("prune") && s.output.contains("ATTENZIONE"), tag + ": avviso per l'opzione non valida");
+		}
+		System.out.println("   " + tag + ": " + s.clientMoves + " mosse legali, latenze (ms) " + s.latencies);
+	}
+
 	static void strictFailure() throws Exception {
 		final List<String> cmd = new ArrayList<>();
 		cmd.add(System.getProperty("java.home") + File.separator + "bin" + File.separator + "java");
@@ -484,7 +523,10 @@ public class TablutGeneticClientCheck {
 			if (Boolean.getBoolean("ga.long")) {
 				sixtySeconds(base);
 			}
+			pruneOption(base);
 			strictFailure();
+			protocolPrune(Turn.WHITE, 4, 3, "nmp,lmr,asp", true);
+			protocolPrune(Turn.BLACK, 4, 2, "zzz", false);
 			protocol(Turn.WHITE, 4, 4, false);
 			protocol(Turn.BLACK, 4, 3, false);
 			protocol(Turn.WHITE, 4, 2, true);

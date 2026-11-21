@@ -470,6 +470,38 @@ public final class FastState {
 		key2 = undo.oldKey2;
 	}
 
+	/**
+	 * MOSSA NULLA (solo per la ricerca, mai una mossa di gioco): passa il turno senza muovere nessun pezzo. Aggiorna turno, hash Zobrist
+	 * e chiave esatta con la STESSA regola di {@link #makeMove} (il bit del turno e' acceso solo col Nero al tratto, quindi passare il turno
+	 * lo inverte sempre), cosi' ogni cache indicizzata da {@link #zobristHash} o da {@link #key0}..{@link #key2} (transposition table, cache
+	 * di valutazione) vede la posizione "stessa scacchiera, altro turno" come una posizione distinta e corretta. Scacchiera, conteggi,
+	 * casella del Re e vincitore non cambiano. Si annulla con {@link #unmakeNullMove} (stesso {@code undo}).
+	 * <p>
+	 * Pre-condizione: la partita non e' finita ({@code winner == WINNER_NONE}): il turno di una posizione terminale non ha significato.
+	 */
+	public void makeNullMove(UndoInfo undo) {
+		undo.capturedCount = 0;
+		undo.oldTurn = turn;
+		undo.oldKingSquare = kingSquare;
+		undo.oldZobristHash = zobristHash;
+		undo.oldKey0 = key0;
+		undo.oldKey1 = key1;
+		undo.oldKey2 = key2;
+		turn = (byte) (turn ^ 1);
+		zobristHash ^= ZobristHash.TURN_KEY;
+		key2 ^= KEY2_TURN_BIT;
+	}
+
+	/** Annulla l'ultima {@link #makeNullMove}, ripristinando ESATTAMENTE lo stato precedente. */
+	public void unmakeNullMove(UndoInfo undo) {
+		turn = undo.oldTurn;
+		kingSquare = undo.oldKingSquare;
+		zobristHash = undo.oldZobristHash;
+		key0 = undo.oldKey0;
+		key1 = undo.oldKey1;
+		key2 = undo.oldKey2;
+	}
+
 	// ------------------------------------------------------------------------------------------ catture
 
 	/**

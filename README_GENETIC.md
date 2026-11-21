@@ -28,7 +28,7 @@ contro il riferimento `TablutNegamaxClient` + `pesi_nnue/trained_v6.nnue`.
 
 ## 2. Cosa e' riusabile e cosa ha senso evolvere
 
-Riutilizzato **senza modifiche**: tutto il client di rete e la ricerca (`TablutNegamaxClient`, `Negamax`, TT, Lazy SMP, gestione del tempo), `NnueNetwork/NnueEvaluator/NnueSession`, `NnueSelfPlay.playGame`, `GameTracker`, `AshtonRules`. **Nessun file esistente e' stato modificato o rimosso** (`git status`: solo file nuovi).
+Riutilizzato **senza modifiche**: tutto il client di rete e la ricerca (`TablutNegamaxClient`, `Negamax`, TT, Lazy SMP, gestione del tempo), `NnueNetwork/NnueEvaluator/NnueSession`, `NnueSelfPlay.playGame`, `GameTracker`, `AshtonRules`. **La parte genetica non modifica ne' rimuove file esistenti** (solo file nuovi). Le ottimizzazioni di ricerca (mossa nulla, LMR, aspirazione) sono una consegna successiva e separata, descritta in `README_PRUNING.md`: modificano in modo additivo 5 file esistenti, con comportamento di default invariato.
 
 Alternative scartate, con motivo:
 * **GA "dal vivo" durante la mossa** (evolvere sequenze di mosse in 60 s): getterebbe via la profondita' di alfa-beta + NNUE (con 1 thread ho misurato profondita' 8 e ~94 M nodi in 58,5 s) ed e' certamente piu' debole.
@@ -138,14 +138,14 @@ Eseguito e riportato sopra: tutta la batteria di test (verde, comprese le regres
 
 ## 10. Informazioni mancanti e rischi
 
-* Hardware del torneo (core, RAM), versione di Java e flag JVM: ignoti. `defaultThreads()` e la dimensione della TT dipendono da core/heap: **riferimento e candidato vanno lanciati con gli stessi flag**.
+* Hardware del torneo (core, RAM), versione di Java e flag JVM: ignoti. (`Negamax.defaultThreads()` vale `min(DEFAULT_THREADS, core)` e si forza con `-Dtablut.threads=N`: il commento del codice cita "4 su una macchina a 4 core" solo come esempio, non descrive la macchina di gara.) `defaultThreads()` e la dimensione della TT dipendono da core/heap: **riferimento e candidato vanno lanciati con gli stessi flag**.
 * Non so se il torneo lancia i client con `timeout` uguale al `-t` del server (il margine di sicurezza dipende dall'argomento `timeout` del client, non dal server).
 * Gli avversari reali (altre squadre) sono ignoti: la fitness e' solo contro il riferimento e potrebbe sovradattarsi a lui. Estensione possibile (non implementata): fitness su un insieme di avversari (es. `trained_v5`, `trained_v4`).
 * La fitness a profondita' bassa puo' non trasferirsi alla gara a 60 s (profondita' ~8+): per questo il cancello usa `depth+1` e il protocollo richiede la fase a tempo reale. Usare `depth` piu' alto in addestramento costa molto di piu'.
 * Stime di costo dell'addestramento (**non misurate**): ho misurato solo il tempo per mossa dalla posizione iniziale (profondita' 4: ~0,13 s; 5: ~0,65 s; 6: ~1,7 s). Con ~10 s/partita a profondita' 4 (ipotesi), la configurazione di default (23 individui non neutri x 6 coppie x 2 partite) vale ~46 minuti-core per generazione.
 * Il nome dichiarato al server e' `negamax` (vedi sezione 1).
 
-## 11. File aggiunti (nessun file esistente modificato)
+## 11. File aggiunti dalla parte genetica (nessun file esistente modificato)
 
 ```
 README_GENETIC.md
@@ -159,3 +159,7 @@ Tablut/src/it/unibo/ai/didattica/competition/tablut/client/TablutGeneticClientCh
 Tablut/tools/run_genetic_checks.sh   Tablut/tools/ga_tournament.sh   Tablut/tools/ga_server_match.sh
 ```
 `build.xml` compila tutto `src`: le nuove classi sono incluse senza altre modifiche.
+
+## 12. Ricerca piu' profonda
+
+`README_PRUNING.md` descrive le tecniche opzionali `prune=` (mossa nulla, LMR, finestre di aspirazione). Il `TablutGeneticClient` inoltra l'opzione al client di riferimento; il cancello e le misure di questo documento usano la ricerca storica.

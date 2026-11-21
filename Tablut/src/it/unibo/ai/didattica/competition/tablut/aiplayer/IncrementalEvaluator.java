@@ -50,6 +50,16 @@ public interface IncrementalEvaluator extends Evaluator {
 		void push(int ply, int move, FastState after, UndoInfo undo);
 
 		/**
+		 * Registra una MOSSA NULLA ({@link FastState#makeNullMove}): il figlio di indice {@code ply} ha la STESSA scacchiera del genitore e il
+		 * turno invertito. Da chiamare dopo {@code after.makeNullMove(...)} e prima di valutare o di scendere.
+		 *
+		 * @return vero se la sessione supporta la mossa nulla; il default (falso) la rifiuta e il chiamante NON deve usarla
+		 */
+		default boolean pushNull(int ply, FastState after) {
+			return false;
+		}
+
+		/**
 		 * Valuta la posizione del ply {@code ply}, con lo stesso significato di {@link Evaluator#evaluate(FastState)} (prospettiva del
 		 * Bianco, posizione NON terminale). {@code state} e' la posizione di lavoro corrente della ricerca: l'implementazione puo'
 		 * usarla per verificare la coerenza dello stato incrementale e, se serve, ricostruirlo da zero.
