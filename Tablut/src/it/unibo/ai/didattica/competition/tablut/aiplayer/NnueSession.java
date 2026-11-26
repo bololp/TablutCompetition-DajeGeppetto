@@ -174,6 +174,25 @@ public final class NnueSession implements IncrementalEvaluator.Session {
 		return NnueNetwork.valueOf(net.logit(acc[ply], act, role)) * ev.outputScale;
 	}
 
+	/**
+	 * Accumulatore (feature di POSIZIONE) del frame {@code ply}, portato a stato calcolato e controllato con la stessa firma di {@link #evaluate}.
+	 * SOLA LETTURA: l'array e' quello interno della sessione e chi lo riceve non deve modificarlo (lo usa {@link TemporalSession}, che ci somma
+	 * sopra le feature temporali in una copia propria).
+	 */
+	int[] accumulator(int ply, FastState s) {
+		if (ply >= cap) {
+			allocate(ply + 1);
+		}
+		if (state[ply] != COMPUTED) {
+			materialize(ply, s);
+		}
+		if (sig[ply] != NnueNetwork.boardSignature(s)) {
+			rebuild(ply, s);
+			fallbackRebuilds++;
+		}
+		return acc[ply];
+	}
+
 	/** Porta il frame {@code ply} allo stato COMPUTED applicando le differenze a partire dal piu' vicino antenato calcolato. */
 	private void materialize(int ply, FastState s) {
 		int k = ply;

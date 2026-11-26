@@ -18,7 +18,9 @@ import it.unibo.ai.didattica.competition.tablut.aiplayer.NegamaxSearcher;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.OrderingSpec;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.PruningOptions;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.TranspositionTable;
+import it.unibo.ai.didattica.competition.tablut.aiplayer.ProgressEvaluator;
 import it.unibo.ai.didattica.competition.tablut.aiplayer.SimpleEvaluator;
+import it.unibo.ai.didattica.competition.tablut.aiplayer.TemporalNnueEvaluator;
 import it.unibo.ai.didattica.competition.tablut.domain.Action;
 import it.unibo.ai.didattica.competition.tablut.domain.State;
 import it.unibo.ai.didattica.competition.tablut.domain.State.Turn;
@@ -65,6 +67,8 @@ public class TablutNegamaxClient extends TablutClient {
 	/** Posizioni realmente occorse dall'ultima cattura (chiavi ESATTE, non hash): la storia per la regola di ripetizione. */
 	private final PositionHistory historySinceLastCapture = new PositionHistory();
 	private int lastObservedPieceCount = -1;
+	/** Se il valutatore e' una rete con feature temporali ({@code eval=tnnue}): riceve la storia REALE delle mosse prima di ogni ricerca. */
+	private TemporalNnueEvaluator temporal;
 
 	/** Costruttore "storico": nessun file di pesi -> usa SimpleEvaluator. */
 	public TablutNegamaxClient(String player, String name, int timeout, String ipAddress)
@@ -144,7 +148,7 @@ public class TablutNegamaxClient extends TablutClient {
 	}
 
 	static boolean isKnownEvalBackend(String name) {
-		return name.equals("auto") || name.equals("simple") || name.equals("mlp") || name.equals("cnn") || name.equals("nnue");
+		return name.equals("auto") || name.equals("simple") || name.equals("mlp") || name.equals("cnn") || name.equals("nnue") || name.equals("tnnue");
 	}
 
 	/**
@@ -188,7 +192,8 @@ public class TablutNegamaxClient extends TablutClient {
 		} catch (IOException e) {
 			throw new IOException("eval=" + backend + ": impossibile caricare i pesi da '" + weightsFile + "' (" + e.getMessage() + ")", e);
 		}
-		final boolean matches = backend.equals("nnue") ? evaluator instanceof NnueEvaluator
+		final boolean matches = backend.equals("tnnue") ? evaluator instanceof TemporalNnueEvaluator
+				: backend.equals("nnue") ? evaluator instanceof NnueEvaluator
 				: backend.equals("cnn") ? evaluator instanceof CnnEvaluator : evaluator instanceof NeuralEvaluator;
 		if (!matches) {
 			throw new IOException("eval=" + backend + ": il file '" + weightsFile + "' contiene un altro tipo di rete (" + EvaluatorLoader.describe(evaluator) + ")");
@@ -320,6 +325,7 @@ public class TablutNegamaxClient extends TablutClient {
 		String algo = System.getProperty("tablut.algo", "negamax");
 		String mctsSpec = "";
 		String evalBackend = "auto";
+		String progressSpec = "off"; // termine di progresso per reti sature: progress=on | basso:alto:pesoBianco:pesoNero
 		PruningOptions pruning = PruningOptions.OFF; // null-move / LMR / aspirazione: opt-in con prune=..., spente di default
 		for (int i = 3; i < args.length; i++) {
 			final String low = args[i].toLowerCase();
@@ -343,6 +349,10 @@ public class TablutNegamaxClient extends TablutClient {
 					marginGiven = true;
 				} else if (low.startsWith("prune=")) {
 					pruning = PruningOptions.parse(args[i].substring("prune=".length()).trim()); // lancia se non valida: allora resta quella di prima
+				} else if (low.startsWith("progress=")) {
+					final String spec = args[i].substring("progress=".length()).trim();
+					ProgressEvaluator.parse(spec, new SimpleEvaluator()); // solo per validarla: lancia se non valida
+					progressSpec = spec;
 				} else if (low.startsWith("algo=")) {
 					algo = normalizeAlgo(args[i].substring("algo=".length())); // lancia se sconosciuto: l'algoritmo resta quello di prima
 				} else if (low.startsWith("eval=")) {
@@ -386,7 +396,7 @@ public class TablutNegamaxClient extends TablutClient {
 		}
 
 		if (!isKnownEvalBackend(evalBackend)) {
-			System.out.println("ERRORE: eval='" + evalBackend + "' sconosciuto (valori ammessi: auto, simple, mlp, cnn, nnue).");
+			System.out.println("ERRORE: eval='" + evalBackend + "' sconosciuto (valori ammessi: auto, simple, mlp, cnn, nnue, tnnue).");
 			System.exit(-1);
 			return;
 		}
@@ -397,6 +407,16 @@ public class TablutNegamaxClient extends TablutClient {
 			System.out.println("ERRORE: " + e.getMessage());
 			System.exit(-1);
 			return;
+		}
+
+		final Evaluator netEvaluator = evaluator; // la rete vera, anche se sotto ci finisce un wrapper (i collegamenti con la storia temporale guardano questa)
+		if (algo.equals("mcts") && !progressSpec.equalsIgnoreCase("off")) {
+			System.out.println("ATTENZIONE: 'progress=' ignorato perche' l'algoritmo e' mcts.");
+		} else {
+			final ProgressEvaluator pe = ProgressEvaluator.parse(progressSpec, evaluator);
+			if (pe != null) {
+				evaluator = pe;
+			}
 		}
 
 		// cache delle valutazioni: solo Negamax con una rete (si veda withEvalCache). Il decoratore e' creato QUI, subito dopo il
@@ -426,6 +446,9 @@ public class TablutNegamaxClient extends TablutClient {
 		}
 
 		TablutNegamaxClient client = new TablutNegamaxClient(role, algo, timeout, ipAddress, searcher);
+		if (netEvaluator instanceof TemporalNnueEvaluator) {
+			client.temporal = (TemporalNnueEvaluator) netEvaluator;
+		}
 		client.run();
 	}
 
@@ -458,7 +481,13 @@ public class TablutNegamaxClient extends TablutClient {
 				long budgetMillis = this.timeoutSeconds * 1000L;
 				long start = System.currentTimeMillis();
 
+				if (temporal != null) {
+					temporal.beforeSearch(position); // mossa dell'avversario ricavata dal confronto con la posizione ricordata
+				}
 				int move = this.searcher.findBestMove(position, budgetMillis, this.historySinceLastCapture);
+				if (temporal != null && move != Move.NONE) {
+					temporal.afterOwnMove(position, move);
+				}
 				Action chosen = move == Move.NONE ? null : Move.toAction(move, turn);
 
 				long elapsed = System.currentTimeMillis() - start;
